@@ -27,7 +27,7 @@ never do these:
 
 ## guardrail mode (project state)
 
-`guardrail_mode: default`
+`guardrail_mode: advanced`
 
 - valid values are only `default` and `advanced`
 - this line is the project-wide source of truth for guardrail mode
@@ -150,3 +150,5 @@ if the user says "turn guardrails back on" (or equivalent), then:
 | `$imlost` | get unstuck |
 | `$fixit` | fix problems |
 | `$deploy` | put it on the internet |
+
+

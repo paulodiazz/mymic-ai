@@ -13,4 +13,149 @@
   --font-space-grotesk: var(--font-space-grotesk), system-ui, sans-serif;
   --font-bricolage: var(--font-bricolage), system-ui, sans-serif;
   --font-instrument-serif: var(--font-instrument-serif), Georgia, serif;
+  --font-orbitron: var(--font-orbitron), system-ui, sans-serif;
+  --font-space-mono: var(--font-space-mono), monospace;
+}
+
+:root {
+  --bg: #0a0608;
+  --surface: #110a10;
+  --accent-magenta: #d4006a;
+  --accent-violet: #7b00cc;
+  --accent-blue: #1a0aff;
+  --glow-pink: #ff2d8a;
+  --glow-purple: #9b30ff;
+  --text-primary: #f0e0f5;
+  --text-dim: #6a4a7a;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
+@keyframes cyberBreathe {
+  0% {
+    transform: scale(1) translate3d(0, 0, 0);
+    filter: hue-rotate(0deg);
+  }
+  50% {
+    transform: scale(1.04) translate3d(-2%, 1%, 0);
+    filter: hue-rotate(-8deg);
+  }
+  100% {
+    transform: scale(1) translate3d(0, 0, 0);
+    filter: hue-rotate(0deg);
+  }
+}
+
+@keyframes cyberFloatIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes glowPulse {
+  0% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--glow-purple) 48%, transparent),
+      0 0 28px color-mix(in srgb, var(--glow-purple) 22%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--glow-pink) 78%, transparent),
+      0 0 42px color-mix(in srgb, var(--glow-pink) 34%, transparent);
+  }
+  100% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--glow-purple) 48%, transparent),
+      0 0 28px color-mix(in srgb, var(--glow-purple) 22%, transparent);
+  }
+}
+
+@keyframes signalDrift {
+  0% {
+    background-position: 0% 0%, 100% 100%, 0 0;
+    filter: hue-rotate(0deg);
+  }
+  50% {
+    background-position: 100% 40%, 0% 60%, 40px 0;
+    filter: hue-rotate(-12deg);
+  }
+  100% {
+    background-position: 0% 0%, 100% 100%, 0 0;
+    filter: hue-rotate(0deg);
+  }
+}
+
+.cyber-mesh {
+  background:
+    radial-gradient(55% 65% at 12% 14%, color-mix(in srgb, var(--accent-violet) 48%, transparent) 0%, transparent 72%),
+    radial-gradient(45% 55% at 86% 8%, color-mix(in srgb, var(--accent-magenta) 45%, transparent) 0%, transparent 74%),
+    radial-gradient(60% 70% at 50% 92%, color-mix(in srgb, var(--accent-blue) 38%, transparent) 0%, transparent 78%),
+    linear-gradient(145deg, #050305 0%, #0a0608 45%, #120913 100%);
+  animation: cyberBreathe 16s ease-in-out infinite;
+}
+
+.cyber-noise {
+  opacity: 0.04;
+  background-image:
+    radial-gradient(circle at 15% 20%, #ffffff 0.3px, transparent 0.3px),
+    radial-gradient(circle at 70% 65%, #ffffff 0.3px, transparent 0.3px);
+  background-size: 3px 3px, 4px 4px;
+}
+
+.cyber-float {
+  animation: cyberFloatIn 680ms both;
+  animation-delay: var(--delay, 0ms);
+}
+
+.cyber-card {
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  backdrop-filter: blur(16px);
+  border: 1px solid color-mix(in srgb, var(--glow-purple) 36%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--glow-pink) 18%, transparent),
+    0 0 24px color-mix(in srgb, var(--glow-purple) 14%, transparent),
+    0 28px 56px color-mix(in srgb, #000000 72%, transparent);
+  transition: transform 200ms ease, filter 200ms ease, box-shadow 200ms ease;
+}
+
+.cyber-card:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.05);
+  animation: glowPulse 1400ms ease-in-out infinite;
+}
+
+.mymic-signal {
+  background:
+    radial-gradient(60% 100% at 10% 20%, color-mix(in srgb, var(--glow-pink) 35%, transparent) 0%, transparent 72%),
+    radial-gradient(70% 100% at 80% 85%, color-mix(in srgb, var(--glow-purple) 35%, transparent) 0%, transparent 70%),
+    repeating-linear-gradient(
+      120deg,
+      transparent 0,
+      transparent 18px,
+      color-mix(in srgb, var(--accent-blue) 24%, transparent) 19px,
+      transparent 21px
+    );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--glow-purple) 35%, transparent),
+    0 0 42px color-mix(in srgb, var(--glow-pink) 20%, transparent);
+  animation: signalDrift 14s ease-in-out infinite;
+}
+
+.mymic-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--glow-pink) 70%, transparent) 50%,
+    transparent 100%
+  );
+  box-shadow: 0 0 26px color-mix(in srgb, var(--glow-purple) 35%, transparent);
 }

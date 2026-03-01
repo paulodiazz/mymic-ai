@@ -6,6 +6,8 @@ import {
   Space_Grotesk,
   Bricolage_Grotesque,
   Instrument_Serif,
+  Orbitron,
+  Space_Mono,
 } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -41,19 +43,33 @@ const instrumentSerif = Instrument_Serif({
   subsets: ["latin"],
 });
 
+const orbitron = Orbitron({
+  variable: "--font-orbitron",
+  subsets: ["latin"],
+});
+
+const spaceMono = Space_Mono({
+  variable: "--font-space-mono",
+  weight: ["400", "700"],
+  subsets: ["latin"],
+});
+
 export const metadata: Metadata = {
-  title: "makesomething ☀️",
-  description: "build your first app with ai. look what i made!",
-  metadataBase: new URL("https://makesomething.so"),
+  title: "Mymic AI | Autonomous Growth Copilot",
+  description:
+    "The right people are already talking about your world. Mymic AI makes sure you're in the room.",
+  metadataBase: new URL("https://mymic.ai"),
   openGraph: {
-    title: "makesomething ☀️",
-    description: "look what i made!",
-    siteName: "makesomething",
+    title: "Mymic AI | Autonomous Growth Copilot",
+    description:
+      "The right people are already talking about your world. Mymic AI makes sure you're in the room.",
+    siteName: "Mymic AI",
   },
   twitter: {
     card: "summary_large_image",
-    title: "makesomething ☀️",
-    description: "look what i made!",
+    title: "Mymic AI | Autonomous Growth Copilot",
+    description:
+      "The right people are already talking about your world. Mymic AI makes sure you're in the room.",
   },
 };
 
@@ -63,12 +79,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="light" suppressHydrationWarning>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${manrope.variable} ${spaceGrotesk.variable} ${bricolageGrotesque.variable} ${instrumentSerif.variable} min-h-screen text-foreground bg-background font-sans antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${manrope.variable} ${spaceGrotesk.variable} ${bricolageGrotesque.variable} ${instrumentSerif.variable} ${orbitron.variable} ${spaceMono.variable} min-h-screen text-foreground bg-background font-sans antialiased`}
       >
         <Providers>{children}</Providers>
       </body>
     </html>
   );
 }
+

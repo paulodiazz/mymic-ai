@@ -1,5 +1,5 @@
 {
-  "name": "make-something",
+  "name": "mymic-ai",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -14,10 +14,12 @@
   },
   "dependencies": {
     "@heroui/react": "^2.8.9",
+    "@supabase/supabase-js": "^2.98.0",
     "framer-motion": "^12.34.3",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "youtube-transcript": "^1.2.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
