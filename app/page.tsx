@@ -242,6 +242,7 @@ export default function Home() {
   const [automationMsg, setAutomationMsg] = useState("");
   const [automationLog, setAutomationLog] = useState<string[]>([]);
   const [discordSyncing, setDiscordSyncing] = useState(false);
+  const [discordGenerating, setDiscordGenerating] = useState(false);
   const [discordMsg, setDiscordMsg] = useState("");
   const [discordPostingDraftId, setDiscordPostingDraftId] = useState<string | null>(null);
   const [discordViewTab, setDiscordViewTab] = useState<"needs_reply" | "active">("needs_reply");
@@ -827,9 +828,6 @@ export default function Home() {
           inviteUrl: state.discordInviteUrl,
           channelName: state.discordChannelName,
           channelId: state.discordChannelId,
-          openaiApiKey: state.openaiApiKey,
-          productName: state.productName || botNameInput || "my project",
-          audience: state.audience || "builders",
           seenMessageIds: state.discordSeenMessageIds,
         }),
       });
@@ -852,7 +850,21 @@ export default function Home() {
         return;
       }
 
-      const incoming = d.drafts ?? [];
+      const existingById = new Map(
+        [...state.discordPendingDrafts, ...state.discordActiveThreads].map((item) => [
+          item.draftId,
+          item,
+        ]),
+      );
+      const incoming = (d.drafts ?? []).map((item) => {
+        const existing = existingById.get(item.draftId);
+        if (!existing) return item;
+        return {
+          ...item,
+          replyText: item.replyText?.trim() ? item.replyText : existing.replyText,
+          learning: item.learning.length > 0 ? item.learning : existing.learning,
+        };
+      });
       const pending = incoming.filter((item) => (item.status ?? "needs_reply") === "needs_reply");
       const active = incoming.filter((item) => item.status === "active");
       update({
@@ -863,13 +875,61 @@ export default function Home() {
       });
       setDiscordMsg(
         incoming.length > 0
-          ? `loaded ${incoming.length} threads. needs reply: ${pending.length}, active: ${active.length}.`
+          ? `scanned ${incoming.length} threads. needs reply: ${pending.length}, active: ${active.length}.`
           : `no posts found. scanned ${d.stats?.threadCount ?? 0} thread(s), ${d.stats?.messageCount ?? 0} message(s).`,
       );
     } catch {
       setDiscordMsg("discord scan failed.");
     } finally {
       setDiscordSyncing(false);
+    }
+  };
+
+  const generateDiscordReplies = async () => {
+    if (!state.openaiApiKey.trim()) {
+      setDiscordMsg("add your openai api key first.");
+      return;
+    }
+    const targets = state.discordPendingDrafts.filter((draft) => !draft.replyText.trim());
+    if (targets.length === 0) {
+      setDiscordMsg("no new drafts to generate right now.");
+      return;
+    }
+    setDiscordGenerating(true);
+    setDiscordMsg(`generating replies for ${targets.length} thread(s)...`);
+    try {
+      const r = await fetch("/api/discord/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          openaiApiKey: state.openaiApiKey,
+          productName: state.productName || botNameInput || "my project",
+          audience: state.audience || "builders",
+          drafts: targets,
+        }),
+      });
+      const d = (await r.json()) as { ok: boolean; error?: string; drafts?: DiscordDraft[] };
+      if (!d.ok) {
+        setDiscordMsg(d.error ?? "could not generate replies.");
+        return;
+      }
+      const generated = new Map((d.drafts ?? []).map((draft) => [draft.draftId, draft]));
+      const nextPending = state.discordPendingDrafts.map((draft) => {
+        const next = generated.get(draft.draftId);
+        return next
+          ? {
+              ...draft,
+              replyText: next.replyText,
+              learning: next.learning,
+            }
+          : draft;
+      });
+      update({ discordPendingDrafts: nextPending });
+      setDiscordMsg(`generated ${generated.size} reply draft(s).`);
+    } catch {
+      setDiscordMsg("could not generate replies.");
+    } finally {
+      setDiscordGenerating(false);
     }
   };
 
@@ -928,6 +988,52 @@ export default function Home() {
         draft.draftId === draftId ? { ...draft, replyText } : draft,
       ),
     });
+  };
+
+  const updateActiveDraftReply = (draftId: string, replyText: string) => {
+    update({
+      discordActiveThreads: state.discordActiveThreads.map((draft) =>
+        draft.draftId === draftId ? { ...draft, replyText } : draft,
+      ),
+    });
+  };
+
+  const replyToActiveDiscordThread = async (draftId: string) => {
+    const draft = state.discordActiveThreads.find((item) => item.draftId === draftId);
+    if (!draft) return;
+    const targetChannelId = (draft.sourceChannelId ?? "").trim() || state.discordChannelId.trim();
+    if (!state.discordBotToken.trim() || !targetChannelId) {
+      setDiscordMsg("missing discord bot token or channel id.");
+      return;
+    }
+    if (!draft.replyText.trim()) {
+      setDiscordMsg("add a reply before posting.");
+      return;
+    }
+    setDiscordPostingDraftId(draftId);
+    setDiscordMsg("posting reply in active conversation...");
+    try {
+      const r = await fetch("/api/discord/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          botToken: state.discordBotToken,
+          channelId: targetChannelId,
+          sourceMessageId: draft.sourceMessageId,
+          replyText: draft.replyText,
+        }),
+      });
+      const d = (await r.json()) as { ok: boolean; error?: string };
+      if (!d.ok) {
+        setDiscordMsg(d.error ?? "could not post active reply.");
+        return;
+      }
+      setDiscordMsg("active reply posted.");
+    } catch {
+      setDiscordMsg("could not post active reply.");
+    } finally {
+      setDiscordPostingDraftId(null);
+    }
   };
 
   if (!state.started) {
@@ -1449,7 +1555,10 @@ export default function Home() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button color="secondary" onPress={syncDiscordApprovals} isLoading={discordSyncing}>
-                        {discordSyncing ? "scanning..." : "scan and queue approvals"}
+                        {discordSyncing ? "scanning..." : "scan discord"}
+                      </Button>
+                      <Button color="primary" variant="flat" onPress={generateDiscordReplies} isLoading={discordGenerating}>
+                        {discordGenerating ? "generating..." : "generate replies"}
                       </Button>
                       <Chip variant="flat" color="secondary">
                         needs reply: {state.discordPendingDrafts.length}
@@ -1529,6 +1638,20 @@ export default function Home() {
                                 author: @{draft.sourceAuthor}
                               </p>
                               <p className="text-sm text-[var(--text-primary)]/85">{draft.sourceText}</p>
+                              <Textarea
+                                label="reply in thread"
+                                value={draft.replyText}
+                                onValueChange={(v) => updateActiveDraftReply(draft.draftId, v)}
+                              />
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  color="secondary"
+                                  onPress={() => replyToActiveDiscordThread(draft.draftId)}
+                                  isLoading={discordPostingDraftId === draft.draftId}
+                                >
+                                  send reply
+                                </Button>
+                              </div>
                             </CardBody>
                           </Card>
                         ))}
