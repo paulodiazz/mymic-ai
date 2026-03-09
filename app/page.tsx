@@ -249,6 +249,12 @@ export default function Home() {
   const userId = session?.user?.id;
 
   useEffect(() => {
+    if (!supabase) {
+      setAuthMsg(
+        "cloud auth is off: set NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY to enable sign-in.",
+      );
+      return;
+    }
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
@@ -261,6 +267,10 @@ export default function Home() {
       if (!userId) {
         setState(DEFAULT_STATE);
         setStateLoaded(false);
+        return;
+      }
+      if (!supabase) {
+        setStateLoaded(true);
         return;
       }
 
@@ -298,9 +308,10 @@ export default function Home() {
   }, [userId]);
 
   useEffect(() => {
-    if (!userId || !stateLoaded) return;
+    if (!userId || !stateLoaded || !supabase) return;
+    const sb = supabase;
     const timer = setTimeout(async () => {
-      await supabase
+      await sb
         .from("user_app_state")
         .upsert({ user_id: userId, state }, { onConflict: "user_id" });
     }, 500);
@@ -351,13 +362,14 @@ export default function Home() {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   const saveStateNow = async (next: AppState = state) => {
-    if (!userId) return;
+    if (!userId || !supabase) return;
     await supabase
       .from("user_app_state")
       .upsert({ user_id: userId, state: next }, { onConflict: "user_id" });
   };
 
   const signUp = async () => {
+    if (!supabase) return setAuthMsg("cloud auth is not configured yet.");
     const email = authEmail.trim().toLowerCase();
     const password = authPassword.trim();
     const name = authName.trim();
@@ -374,6 +386,7 @@ export default function Home() {
   };
 
   const signIn = async () => {
+    if (!supabase) return setAuthMsg("cloud auth is not configured yet.");
     const { error } = await supabase.auth.signInWithPassword({
       email: authEmail.trim().toLowerCase(),
       password: authPassword.trim(),
@@ -383,6 +396,7 @@ export default function Home() {
   };
 
   const signOut = async () => {
+    if (!supabase) return setAuthMsg("cloud auth is not configured yet.");
     await saveStateNow();
     await supabase.auth.signOut();
     setAuthMsg("signed out.");
