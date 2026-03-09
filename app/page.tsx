@@ -46,6 +46,23 @@ type DiscoverPost = {
   score: number;
 };
 type Day = { day: number; post: string; play: string };
+type DiscordDraft = {
+  draftId: string;
+  sourceMessageId: string;
+  sourceChannelId?: string;
+  sourceTitle?: string;
+  sourceAuthor: string;
+  sourceText: string;
+  replyText: string;
+  learning: string[];
+  status?: "needs_reply" | "active";
+  mode: "first_reply" | "thread_followup";
+};
+type LearningItem = {
+  at: string;
+  sourceMessageId: string;
+  notes: string[];
+};
 type CampaignSnapshot = {
   id: string;
   createdAt: string;
@@ -57,9 +74,35 @@ type CampaignSnapshot = {
   replies: number;
   followers: number;
 };
+type BotProfile = {
+  id: string;
+  name: string;
+  productName: string;
+  productType: string;
+  audience: string;
+  goal: string;
+  youtubeUrl: string;
+  toneProfile: string;
+  xToken: string;
+  xApiKey: string;
+  xApiSecret: string;
+  xAccessToken: string;
+  xAccessTokenSecret: string;
+  discordBotToken: string;
+  discordInviteUrl: string;
+  discordChannelName: string;
+  discordChannelId: string;
+  discordSeenMessageIds: string[];
+  discordPendingDrafts: DiscordDraft[];
+  discordActiveThreads: DiscordDraft[];
+  discordLearningLog: LearningItem[];
+  createdAt: string;
+};
+const BOT_PERSONALITY =
+  "i'm a new bot, a little clumsy, but i learn fast when people help me.";
 type AppState = {
   started: boolean;
-  selectedTab: "account" | "product" | "connections" | "actions";
+  selectedTab: "account" | "power" | "product" | "connections" | "actions";
   productName: string;
   productType: string;
   audience: string;
@@ -72,6 +115,14 @@ type AppState = {
   xApiSecret: string;
   xAccessToken: string;
   xAccessTokenSecret: string;
+  discordBotToken: string;
+  discordInviteUrl: string;
+  discordChannelName: string;
+  discordChannelId: string;
+  discordSeenMessageIds: string[];
+  discordPendingDrafts: DiscordDraft[];
+  discordActiveThreads: DiscordDraft[];
+  discordLearningLog: LearningItem[];
   plan: Day[];
   day: number;
   posted: number[];
@@ -82,11 +133,10 @@ type AppState = {
   autoPost: boolean;
   autoComment: boolean;
   autoMetrics: boolean;
-  paid: boolean;
-  planEndsAt: string | null;
-  trialPostsUsed: number;
   campaignId: string;
   campaignArchive: CampaignSnapshot[];
+  bots: BotProfile[];
+  activeBotId: string | null;
 };
 
 const DEFAULT_STATE: AppState = {
@@ -104,6 +154,14 @@ const DEFAULT_STATE: AppState = {
   xApiSecret: "",
   xAccessToken: "",
   xAccessTokenSecret: "",
+  discordBotToken: "",
+  discordInviteUrl: "https://discord.gg/vCpQWbkD",
+  discordChannelName: "i-shipped",
+  discordChannelId: "",
+  discordSeenMessageIds: [],
+  discordPendingDrafts: [],
+  discordActiveThreads: [],
+  discordLearningLog: [],
   plan: [],
   day: 1,
   posted: [],
@@ -114,11 +172,10 @@ const DEFAULT_STATE: AppState = {
   autoPost: true,
   autoComment: true,
   autoMetrics: true,
-  paid: false,
-  planEndsAt: null,
-  trialPostsUsed: 0,
   campaignId: "",
   campaignArchive: [],
+  bots: [],
+  activeBotId: null,
 };
 
 function buildPlan(state: AppState): Day[] {
@@ -128,20 +185,20 @@ function buildPlan(state: AppState): Day[] {
     if (day % 3 === 1) {
       return {
         day,
-        post: `[tone: ${tone}] building ${state.productName} for ${state.audience}. shipped a win today. chasing ${state.goal}. what should improve next?`,
+        post: `[tone: ${tone}] ${BOT_PERSONALITY} building ${state.productName} for ${state.audience}. shipped a win today. chasing ${state.goal}. what should improve next?`,
         play: "leave thoughtful comments on 10 builder posts.",
       };
     }
     if (day % 3 === 2) {
       return {
         day,
-        post: `[tone: ${tone}] lesson from today while building ${state.productName}: speed + feedback beats perfection.`,
+        post: `[tone: ${tone}] ${BOT_PERSONALITY} lesson from today while building ${state.productName}: speed + feedback beats perfection.`,
         play: "reply to every comment with one follow-up question.",
       };
     }
     return {
       day,
-      post: `[tone: ${tone}] quick update: ${state.productName} is getting traction with ${state.audience}. opening 3 early spots.`,
+      post: `[tone: ${tone}] ${BOT_PERSONALITY} quick update: ${state.productName} is getting traction with ${state.audience}. opening 3 early spots.`,
       play: "join launch threads and add one concrete opinion.",
     };
   });
@@ -153,6 +210,9 @@ const cleanPostText = (text: string): string =>
   text.replace(/^\s*\[tone:[^\]]+\]\s*/i, "").trim();
 const newCampaignId = (): string =>
   `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const newBotId = (): string =>
+  `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const MASTER_EMAIL = "paulodiazg32@gmail.com";
 
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
@@ -161,9 +221,8 @@ export default function Home() {
   const [authName, setAuthName] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authMsg, setAuthMsg] = useState("");
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-  const [paymentMsg, setPaymentMsg] = useState("");
   const [xHelpOpen, setXHelpOpen] = useState(false);
+  const [botNameInput, setBotNameInput] = useState("");
 
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
   const [stateLoaded, setStateLoaded] = useState(false);
@@ -182,6 +241,10 @@ export default function Home() {
   const [automationRunning, setAutomationRunning] = useState(false);
   const [automationMsg, setAutomationMsg] = useState("");
   const [automationLog, setAutomationLog] = useState<string[]>([]);
+  const [discordSyncing, setDiscordSyncing] = useState(false);
+  const [discordMsg, setDiscordMsg] = useState("");
+  const [discordPostingDraftId, setDiscordPostingDraftId] = useState<string | null>(null);
+  const [discordViewTab, setDiscordViewTab] = useState<"needs_reply" | "active">("needs_reply");
   const [cursor, setCursor] = useState({ x: 0, y: 0 });
   const userId = session?.user?.id;
 
@@ -252,42 +315,6 @@ export default function Home() {
     return () => window.removeEventListener("mousemove", handleMove);
   }, []);
 
-  useEffect(() => {
-    if (!session?.user?.id) return;
-    const params = new URLSearchParams(window.location.search);
-    const checkout = params.get("checkout");
-    const sessionId = params.get("session_id");
-    if (checkout !== "success" || !sessionId) return;
-
-    const run = async () => {
-      try {
-        const r = await fetch("/api/payments/verify-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId }),
-        });
-        const d = (await r.json()) as {
-          ok?: boolean;
-          paid?: boolean;
-          planEndsAt?: string;
-          error?: string;
-        };
-        if (!r.ok || !d.ok || !d.paid) {
-          setPaymentMsg(d.error ?? "payment verification failed.");
-          return;
-        }
-        update({ paid: true, planEndsAt: d.planEndsAt ?? state.planEndsAt });
-        setPaymentMsg("payment confirmed. premium unlocked.");
-        window.history.replaceState({}, "", window.location.pathname);
-      } catch {
-        setPaymentMsg("payment verification failed.");
-      }
-    };
-
-    run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id]);
-
   const hasX =
     !!state.xToken ||
     (!!state.xApiKey &&
@@ -300,11 +327,24 @@ export default function Home() {
   const scheduledDays = state.plan.slice(state.day - 1, state.day + 4);
   const progress = Math.round((state.day / 14) * 100);
   const postedCount = state.posted.length;
-  const isPaid = state.paid;
-  const trialRemaining = Math.max(0, 1 - state.trialPostsUsed);
-  const canUseTrialAutomation = trialRemaining > 0;
+  const isMasterUser = (session?.user?.email ?? "").toLowerCase() === MASTER_EMAIL;
+  const activeBot = state.bots.find((bot) => bot.id === state.activeBotId) ?? null;
   const canGenerate =
     !!state.productName && !!state.productType && !!state.audience && !!state.goal;
+
+  useEffect(() => {
+    if (!isMasterUser && state.selectedTab === "power") {
+      setState((prev) =>
+        prev.selectedTab === "power" ? { ...prev, selectedTab: "account" } : prev,
+      );
+      return;
+    }
+    if (isMasterUser && state.selectedTab === "account") {
+      setState((prev) =>
+        prev.selectedTab === "account" ? { ...prev, selectedTab: "power" } : prev,
+      );
+    }
+  }, [isMasterUser, state.selectedTab]);
 
   const update = (patch: Partial<AppState>) => setState((prev) => ({ ...prev, ...patch }));
   const jumpTo = (id: string) => {
@@ -315,35 +355,6 @@ export default function Home() {
     await supabase
       .from("user_app_state")
       .upsert({ user_id: userId, state: next }, { onConflict: "user_id" });
-  };
-
-  const startCheckout = async () => {
-    if (!session?.user?.id || checkoutLoading) {
-      setPaymentMsg("sign in first to continue with checkout.");
-      return;
-    }
-    setCheckoutLoading(true);
-    setPaymentMsg("redirecting to secure checkout...");
-    try {
-      const r = await fetch("/api/payments/create-checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: session.user.id,
-          email: session.user.email ?? authEmail,
-        }),
-      });
-      const d = (await r.json()) as { ok?: boolean; url?: string; error?: string };
-      if (!r.ok || !d.ok || !d.url) {
-        setPaymentMsg(d.error ?? "could not start checkout.");
-        return;
-      }
-      window.location.href = d.url;
-    } catch {
-      setPaymentMsg("checkout failed.");
-    } finally {
-      setCheckoutLoading(false);
-    }
   };
 
   const signUp = async () => {
@@ -375,6 +386,145 @@ export default function Home() {
     await saveStateNow();
     await supabase.auth.signOut();
     setAuthMsg("signed out.");
+  };
+
+  const clearWorkspaceForNewBot = () => {
+    if (!isMasterUser) {
+      setAuthMsg("power user access required to create bots.");
+      return;
+    }
+    update({
+      activeBotId: null,
+      productName: "",
+      productType: "",
+      audience: "",
+      goal: "",
+      youtubeUrl: "",
+      toneProfile: "direct creator",
+      xToken: "",
+      xApiKey: "",
+      xApiSecret: "",
+      xAccessToken: "",
+      xAccessTokenSecret: "",
+      discordBotToken: "",
+      discordInviteUrl: "https://discord.gg/vCpQWbkD",
+      discordChannelName: "i-shipped",
+      discordChannelId: "",
+      discordSeenMessageIds: [],
+      discordPendingDrafts: [],
+      discordActiveThreads: [],
+      discordLearningLog: [],
+      plan: [],
+      day: 1,
+      posted: [],
+      postedTweetIds: [],
+      views: 0,
+      replies: 0,
+      followers: 0,
+      campaignId: newCampaignId(),
+    });
+    setBotNameInput("");
+    setToneMsg("");
+    setDiscoverMsg("");
+    setEngageMsg("");
+    setMetricsMsg("");
+    setResults([]);
+    setAutomationLog([]);
+    setAutomationMsg("new bot draft ready.");
+  };
+
+  const saveBotConfig = (forceNew = false) => {
+    if (!isMasterUser) {
+      setAuthMsg("power user access required to manage bots.");
+      return;
+    }
+    const name = botNameInput.trim() || state.productName.trim();
+    if (!name) {
+      setAuthMsg("add a bot name or product name first.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const nextBot: BotProfile = {
+      id: forceNew ? newBotId() : state.activeBotId ?? newBotId(),
+      name,
+      productName: state.productName,
+      productType: state.productType,
+      audience: state.audience,
+      goal: state.goal,
+      youtubeUrl: state.youtubeUrl,
+      toneProfile: state.toneProfile,
+      xToken: state.xToken,
+      xApiKey: state.xApiKey,
+      xApiSecret: state.xApiSecret,
+      xAccessToken: state.xAccessToken,
+      xAccessTokenSecret: state.xAccessTokenSecret,
+      discordBotToken: state.discordBotToken,
+      discordInviteUrl: state.discordInviteUrl,
+      discordChannelName: state.discordChannelName,
+      discordChannelId: state.discordChannelId,
+      discordSeenMessageIds: state.discordSeenMessageIds,
+      discordPendingDrafts: state.discordPendingDrafts,
+      discordActiveThreads: state.discordActiveThreads,
+      discordLearningLog: state.discordLearningLog,
+      createdAt: activeBot?.createdAt ?? now,
+    };
+    const exists = state.bots.some((bot) => bot.id === nextBot.id);
+    update({
+      bots: exists
+        ? state.bots.map((bot) => (bot.id === nextBot.id ? nextBot : bot))
+        : [nextBot, ...state.bots],
+      activeBotId: nextBot.id,
+    });
+    setBotNameInput(nextBot.name);
+    setAuthMsg(
+      forceNew || !exists
+        ? `created bot "${nextBot.name}".`
+        : `updated bot "${nextBot.name}".`,
+    );
+  };
+
+  const loadBotConfig = (botId: string) => {
+    const bot = state.bots.find((item) => item.id === botId);
+    if (!bot) return;
+    update({
+      activeBotId: bot.id,
+      productName: bot.productName,
+      productType: bot.productType,
+      audience: bot.audience,
+      goal: bot.goal,
+      youtubeUrl: bot.youtubeUrl,
+      toneProfile: bot.toneProfile,
+      xToken: bot.xToken,
+      xApiKey: bot.xApiKey,
+      xApiSecret: bot.xApiSecret,
+      xAccessToken: bot.xAccessToken,
+      xAccessTokenSecret: bot.xAccessTokenSecret,
+      discordBotToken: bot.discordBotToken ?? "",
+      discordInviteUrl: bot.discordInviteUrl ?? "https://discord.gg/vCpQWbkD",
+      discordChannelName: bot.discordChannelName ?? "i-shipped",
+      discordChannelId: bot.discordChannelId ?? "",
+      discordSeenMessageIds: bot.discordSeenMessageIds ?? [],
+      discordPendingDrafts: bot.discordPendingDrafts ?? [],
+      discordActiveThreads: bot.discordActiveThreads ?? [],
+      discordLearningLog: bot.discordLearningLog ?? [],
+    });
+    setBotNameInput(bot.name);
+    setAuthMsg(`loaded bot "${bot.name}".`);
+  };
+
+  const removeBotConfig = (botId: string) => {
+    if (!isMasterUser) {
+      setAuthMsg("power user access required to manage bots.");
+      return;
+    }
+    const bot = state.bots.find((item) => item.id === botId);
+    const remaining = state.bots.filter((item) => item.id !== botId);
+    update({
+      bots: remaining,
+      activeBotId:
+        state.activeBotId === botId ? (remaining.length > 0 ? remaining[0].id : null) : state.activeBotId,
+    });
+    setAuthMsg(bot ? `deleted bot "${bot.name}".` : "bot deleted.");
   };
 
   const analyzeTone = async () => {
@@ -441,7 +591,7 @@ export default function Home() {
   };
 
   const runDay = () => {
-    if (!state.paid || !state.plan.length) return;
+    if (!state.plan.length) return;
     const d = state.day;
     update({ day: Math.min(14, d + 1) });
   };
@@ -460,10 +610,6 @@ export default function Home() {
 
   const publish = async () => {
     if (!today || publishing) return;
-    if (!state.paid && state.trialPostsUsed >= 1) {
-      setResults([{ platform: "x", ok: false, message: "free trial used. upgrade to continue." }]);
-      return;
-    }
     setPublishing(true);
     setResults([]);
     try {
@@ -496,11 +642,7 @@ export default function Home() {
         update({
           postedTweetIds: nextPostedIds,
           day: Math.min(14, state.day + 1),
-          trialPostsUsed: state.paid ? state.trialPostsUsed : Math.max(state.trialPostsUsed, 1),
         });
-        if (!state.paid) {
-          setAutomationMsg("free trial used: 1/1 automated post complete. upgrade to unlock full automation.");
-        }
       }
     } catch {
       setResults([{ platform: "x", ok: false, message: "publish failed." }]);
@@ -510,8 +652,8 @@ export default function Home() {
   };
 
   const refreshRealMetrics = async () => {
-    if (!state.paid || !hasX) {
-      setMetricsMsg("locked: upgrade to access live metrics.");
+    if (!hasX) {
+      setMetricsMsg("connect x credentials first.");
       return;
     }
     setMetricsLoading(true);
@@ -558,10 +700,6 @@ export default function Home() {
   };
 
   const discoverRelevantPosts = async () => {
-    if (!state.paid) {
-      setDiscoverMsg("locked: upgrade to access real-time discover.");
-      return;
-    }
     if (!hasX || !searchQuery) return;
     setDiscovering(true);
     setDiscoverMsg("finding relevant posts...");
@@ -597,10 +735,6 @@ export default function Home() {
   };
 
   const autoCommentTopPosts = async () => {
-    if (!state.paid) {
-      setEngageMsg("locked: upgrade to access auto-engagement.");
-      return;
-    }
     if (!hasX || !searchQuery || engaging) return;
     setEngaging(true);
     setEngageMsg("posting replies...");
@@ -643,10 +777,6 @@ export default function Home() {
 
   const executeTodayAutomation = async () => {
     if (!today) return;
-    if (!state.paid && state.trialPostsUsed >= 1) {
-      setAutomationMsg("free trial completed. upgrade to run full automation.");
-      return;
-    }
     setAutomationRunning(true);
     setAutomationMsg(`running day ${state.day} automation...`);
     setAutomationLog([
@@ -665,6 +795,125 @@ export default function Home() {
     } finally {
       setAutomationRunning(false);
     }
+  };
+
+  const syncDiscordApprovals = async () => {
+    if (!state.discordBotToken.trim()) {
+      setDiscordMsg("add a discord bot token first.");
+      return;
+    }
+    setDiscordSyncing(true);
+    setDiscordMsg("scanning discord...");
+    try {
+      const r = await fetch("/api/discord/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          botToken: state.discordBotToken,
+          inviteUrl: state.discordInviteUrl,
+          channelName: state.discordChannelName,
+          channelId: state.discordChannelId,
+          openaiApiKey: state.openaiApiKey,
+          productName: state.productName || botNameInput || "my project",
+          audience: state.audience || "builders",
+          seenMessageIds: state.discordSeenMessageIds,
+        }),
+      });
+      const d = (await r.json()) as {
+        ok: boolean;
+        error?: string;
+        warning?: string;
+        rateLimited?: boolean;
+        channelId?: string;
+        channelName?: string;
+        drafts?: DiscordDraft[];
+        stats?: { threadCount?: number; messageCount?: number; postCount?: number };
+      };
+      if (!d.ok) {
+        setDiscordMsg(d.error ?? "discord scan failed.");
+        return;
+      }
+      if (d.rateLimited) {
+        setDiscordMsg(d.warning ?? "discord is rate-limiting scans. wait a bit and retry.");
+        return;
+      }
+
+      const incoming = d.drafts ?? [];
+      const pending = incoming.filter((item) => (item.status ?? "needs_reply") === "needs_reply");
+      const active = incoming.filter((item) => item.status === "active");
+      update({
+        discordChannelId: d.channelId ?? state.discordChannelId,
+        discordChannelName: d.channelName ?? state.discordChannelName,
+        discordPendingDrafts: pending.slice(0, 100),
+        discordActiveThreads: active.slice(0, 100),
+      });
+      setDiscordMsg(
+        incoming.length > 0
+          ? `loaded ${incoming.length} threads. needs reply: ${pending.length}, active: ${active.length}.`
+          : `no posts found. scanned ${d.stats?.threadCount ?? 0} thread(s), ${d.stats?.messageCount ?? 0} message(s).`,
+      );
+    } catch {
+      setDiscordMsg("discord scan failed.");
+    } finally {
+      setDiscordSyncing(false);
+    }
+  };
+
+  const approveDiscordDraft = async (draftId: string) => {
+    const draft = state.discordPendingDrafts.find((item) => item.draftId === draftId);
+    if (!draft) return;
+    const targetChannelId = (draft.sourceChannelId ?? "").trim() || state.discordChannelId.trim();
+    if (!state.discordBotToken.trim() || !targetChannelId) {
+      setDiscordMsg("missing discord bot token or channel id.");
+      return;
+    }
+    setDiscordPostingDraftId(draftId);
+    setDiscordMsg("posting approved reply...");
+    try {
+      const r = await fetch("/api/discord/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          botToken: state.discordBotToken,
+          channelId: targetChannelId,
+          sourceMessageId: draft.sourceMessageId,
+          replyText: draft.replyText,
+        }),
+      });
+      const d = (await r.json()) as { ok: boolean; error?: string };
+      if (!d.ok) {
+        setDiscordMsg(d.error ?? "could not post approved reply.");
+        return;
+      }
+      update({
+        discordPendingDrafts: state.discordPendingDrafts.filter((item) => item.draftId !== draftId),
+        discordActiveThreads: [
+          { ...draft, status: "active" as const },
+          ...state.discordActiveThreads.filter((item) => item.draftId !== draftId),
+        ].slice(0, 100),
+        discordSeenMessageIds: Array.from(
+          new Set([...state.discordSeenMessageIds, draft.sourceMessageId]),
+        ).slice(-500),
+        discordLearningLog: [
+          { at: new Date().toISOString(), sourceMessageId: draft.sourceMessageId, notes: draft.learning },
+          ...state.discordLearningLog,
+        ].slice(0, 120),
+      });
+      setDiscordViewTab("active");
+      setDiscordMsg("approved reply posted.");
+    } catch {
+      setDiscordMsg("could not post approved reply.");
+    } finally {
+      setDiscordPostingDraftId(null);
+    }
+  };
+
+  const updateDiscordDraftReply = (draftId: string, replyText: string) => {
+    update({
+      discordPendingDrafts: state.discordPendingDrafts.map((draft) =>
+        draft.draftId === draftId ? { ...draft, replyText } : draft,
+      ),
+    });
   };
 
   if (!state.started) {
@@ -883,6 +1132,19 @@ export default function Home() {
             >
               Account
             </Button>
+            {isMasterUser && (
+              <Button
+                className="justify-start"
+                color="secondary"
+                variant={selectedTab === "power" ? "solid" : "flat"}
+                onPress={() => {
+                  update({ selectedTab: "power" });
+                  jumpTo("workflow-section");
+                }}
+              >
+                Power User
+              </Button>
+            )}
             <p className="pt-3 text-xs uppercase tracking-[0.16em] text-[var(--text-dim)]">Workflow</p>
             <Button
               className="justify-start"
@@ -919,7 +1181,7 @@ export default function Home() {
             </Button>
             <div className="mt-3 rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] bg-black/25 p-3 text-xs">
               <p className="uppercase tracking-[0.14em] text-[var(--text-dim)]">Campaign</p>
-              <p className="mt-1 text-[var(--text-primary)]">{state.paid ? "active" : "inactive"}</p>
+              <p className="mt-1 text-[var(--text-primary)]">{hasX ? "ready" : "needs x connection"}</p>
               <p className="text-[var(--text-dim)]">posted {postedCount}/14</p>
             </div>
           </CardBody>
@@ -946,15 +1208,9 @@ export default function Home() {
           <CardBody className="gap-2 text-sm">
             <p className="font-[family-name:var(--font-orbitron)] uppercase">quick guide</p>
             <p className="text-[var(--text-primary)]/85">
-              try the full workflow now. you can run <strong>1 automated post free</strong>.
-              to unlock continuous automation, discover, auto-comments, and live metrics:
-              create an account and upgrade.
+              as power user, create one autonomous bot per project, then run publishing +
+              engagement and track traction.
             </p>
-            {!isPaid && (
-              <p className="text-xs text-[var(--text-dim)]">
-                free trial remaining: {trialRemaining}/1 automated post
-              </p>
-            )}
           </CardBody>
         </Card>
 
@@ -965,7 +1221,7 @@ export default function Home() {
           selectedKey={selectedTab}
           onSelectionChange={(key) =>
             update({
-              selectedTab: String(key) as "account" | "product" | "connections" | "actions",
+              selectedTab: String(key) as "account" | "power" | "product" | "connections" | "actions",
             })
           }
           classNames={{ tab: "font-[family-name:var(--font-space-mono)] uppercase tracking-wider" }}
@@ -976,7 +1232,7 @@ export default function Home() {
                 <div>
                   <p className="font-[family-name:var(--font-orbitron)] uppercase">account</p>
                   <p className="mt-1 text-xs text-[var(--text-dim)]">
-                    connect your identity and billing before launching automation.
+                    connect your account to save and sync your bot workspace.
                   </p>
                 </div>
                 <Chip color={session ? "success" : "default"} variant="flat">
@@ -1042,28 +1298,14 @@ export default function Home() {
                   </>
                 ) : (
                   <>
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-3 sm:grid-cols-1">
                       <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] bg-black/20 p-3">
-                        <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">identity</p>
+                        <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">account</p>
                         <p className="mt-1 break-all text-[var(--text-primary)]">{session.user.email}</p>
-                      </div>
-                      <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] bg-black/20 p-3">
-                        <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">plan</p>
-                        <p className={state.paid ? "mt-1 text-emerald-300" : "mt-1 text-[var(--text-primary)]"}>
-                          {state.paid
-                            ? `active until ${new Date(
-                                state.planEndsAt ?? Date.now()
-                              ).toLocaleDateString()}`
-                            : "not active"}
-                        </p>
+                        <p className="mt-1 text-xs text-[var(--text-dim)]">bots saved: {state.bots.length}</p>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {!state.paid && (
-                        <Button color="secondary" onPress={startCheckout} isLoading={checkoutLoading}>
-                          unlock premium - $10 / 14 days
-                        </Button>
-                      )}
                       <Button variant="bordered" color="secondary" onPress={signOut}>
                         sign out
                       </Button>
@@ -1071,10 +1313,234 @@ export default function Home() {
                   </>
                 )}
                 {authMsg && <p className="text-xs text-[var(--text-dim)]">{authMsg}</p>}
-                {paymentMsg && <p className="text-xs text-[var(--text-dim)]">{paymentMsg}</p>}
               </CardBody>
             </Card>
           </Tab>
+          {isMasterUser && (
+            <Tab key="power" title="Power User">
+              <div className="mt-4 grid gap-6 lg:grid-cols-2">
+                <Card className="cyber-card" shadow="none">
+                  <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+                    bot controls
+                  </CardHeader>
+                  <CardBody className="gap-3 text-sm">
+                  <Input
+                    label="bot name"
+                    value={botNameInput}
+                    onValueChange={setBotNameInput}
+                    isDisabled={!session || !isMasterUser}
+                  />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button
+                      color="secondary"
+                      onPress={() => saveBotConfig(true)}
+                      isDisabled={!session || !isMasterUser}
+                    >
+                      create new bot
+                    </Button>
+                    <Button
+                      color="secondary"
+                      variant="flat"
+                      onPress={() => saveBotConfig(false)}
+                      isDisabled={!session || !isMasterUser || !state.activeBotId}
+                    >
+                      save changes
+                    </Button>
+                    <Button
+                      color="secondary"
+                      variant="bordered"
+                      onPress={clearWorkspaceForNewBot}
+                      isDisabled={!session || !isMasterUser}
+                    >
+                      clear workspace
+                    </Button>
+                    <Button
+                      color="secondary"
+                      variant="ghost"
+                      isDisabled={!session || !state.activeBotId}
+                      onPress={() => state.activeBotId && loadBotConfig(state.activeBotId)}
+                    >
+                      reload active bot
+                    </Button>
+                  </div>
+                  </CardBody>
+                </Card>
+                <Card className="cyber-card" shadow="none">
+                  <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+                    project bots
+                  </CardHeader>
+                  <CardBody className="gap-3 text-sm">
+                    {state.bots.length === 0 ? (
+                      <p>no bots yet. create your first project bot.</p>
+                    ) : (
+                      state.bots.map((bot) => (
+                        <div key={bot.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                          <p>
+                            <strong>{bot.name}</strong> {bot.id === state.activeBotId ? "(active)" : ""}
+                          </p>
+                          <p className="text-xs text-[var(--text-dim)]">
+                            {bot.productName || "no project name"} | {bot.productType || "type not set"}
+                          </p>
+                          <p className="text-xs text-[var(--text-dim)]">
+                            audience: {bot.audience || "not set"}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button size="sm" color="secondary" variant="flat" onPress={() => loadBotConfig(bot.id)}>
+                              open
+                            </Button>
+                            <Button
+                              size="sm"
+                              color="danger"
+                              variant="light"
+                              onPress={() => removeBotConfig(bot.id)}
+                              isDisabled={!isMasterUser}
+                            >
+                              delete
+                            </Button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </CardBody>
+                </Card>
+                <Card className="cyber-card lg:col-span-2" shadow="none">
+                  <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+                    discord approvals
+                  </CardHeader>
+                  <CardBody className="gap-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Input
+                        label="discord bot token"
+                        type="password"
+                        description="use bot token from discord app > bot tab (not app id or public key)"
+                        value={state.discordBotToken}
+                        onValueChange={(v) => update({ discordBotToken: v })}
+                      />
+                      <Input
+                        label="discord invite url"
+                        value={state.discordInviteUrl}
+                        onValueChange={(v) => update({ discordInviteUrl: v })}
+                      />
+                      <Input
+                        label="channel name"
+                        description="supports text channels and forum channels"
+                        value={state.discordChannelName}
+                        onValueChange={(v) => update({ discordChannelName: v })}
+                      />
+                      <Input
+                        label="channel id (auto-filled after scan)"
+                        value={state.discordChannelId}
+                        onValueChange={(v) => update({ discordChannelId: v })}
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button color="secondary" onPress={syncDiscordApprovals} isLoading={discordSyncing}>
+                        {discordSyncing ? "scanning..." : "scan and queue approvals"}
+                      </Button>
+                      <Chip variant="flat" color="secondary">
+                        needs reply: {state.discordPendingDrafts.length}
+                      </Chip>
+                      <Chip variant="flat" color="primary">
+                        active: {state.discordActiveThreads.length}
+                      </Chip>
+                    </div>
+                    {discordMsg && <p className="text-xs text-[var(--text-dim)]">{discordMsg}</p>}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant={discordViewTab === "needs_reply" ? "solid" : "flat"}
+                        color="secondary"
+                        onPress={() => setDiscordViewTab("needs_reply")}
+                      >
+                        needs reply
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={discordViewTab === "active" ? "solid" : "flat"}
+                        color="secondary"
+                        onPress={() => setDiscordViewTab("active")}
+                      >
+                        active conversations
+                      </Button>
+                    </div>
+                    {discordViewTab === "needs_reply" ? (
+                      state.discordPendingDrafts.length === 0 ? (
+                        <p className="text-sm text-[var(--text-dim)]">
+                          no posts need reply right now. run scan to refresh from #{state.discordChannelName || "i-shipped"}.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {state.discordPendingDrafts.map((draft) => (
+                            <Card key={draft.draftId} className="border border-white/10 bg-black/20" shadow="none">
+                              <CardBody className="gap-2">
+                                <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                  title: {draft.sourceTitle || "untitled thread"}
+                                </p>
+                                <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                  author: @{draft.sourceAuthor}
+                                </p>
+                                <p className="text-sm text-[var(--text-primary)]/85">{draft.sourceText}</p>
+                                <Textarea
+                                  label="suggested reply"
+                                  value={draft.replyText}
+                                  onValueChange={(v) => updateDiscordDraftReply(draft.draftId, v)}
+                                />
+                                <div className="flex flex-wrap gap-2">
+                                  <Button
+                                    color="secondary"
+                                    onPress={() => approveDiscordDraft(draft.draftId)}
+                                    isLoading={discordPostingDraftId === draft.draftId}
+                                  >
+                                    approve and post
+                                  </Button>
+                                </div>
+                              </CardBody>
+                            </Card>
+                          ))}
+                        </div>
+                      )
+                    ) : state.discordActiveThreads.length === 0 ? (
+                      <p className="text-sm text-[var(--text-dim)]">
+                        no active conversations yet. approve a reply and it will appear here.
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        {state.discordActiveThreads.map((draft) => (
+                          <Card key={draft.draftId} className="border border-white/10 bg-black/20" shadow="none">
+                            <CardBody className="gap-2">
+                              <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                title: {draft.sourceTitle || "untitled thread"}
+                              </p>
+                              <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                author: @{draft.sourceAuthor}
+                              </p>
+                              <p className="text-sm text-[var(--text-primary)]/85">{draft.sourceText}</p>
+                            </CardBody>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] bg-black/20 p-3 text-xs">
+                      <p className="mb-2 uppercase tracking-[0.12em] text-[var(--text-dim)]">learning stream</p>
+                      {state.discordLearningLog.length === 0 ? (
+                        <p className="text-[var(--text-dim)]">no approved learning yet.</p>
+                      ) : (
+                        state.discordLearningLog.slice(0, 12).map((entry) => (
+                          <div key={`${entry.sourceMessageId}-${entry.at}`} className="mb-2 border-b border-white/10 pb-2 last:border-none">
+                            {entry.notes.map((note, idx) => (
+                              <p key={`${entry.sourceMessageId}-note-${idx}`} className="text-[var(--text-primary)]/85">
+                                - {note}
+                              </p>
+                            ))}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </CardBody>
+                </Card>
+              </div>
+            </Tab>
+          )}
           <Tab key="product" title="Product">
             <div className="mt-4 grid gap-6 lg:grid-cols-2">
               <Card className="cyber-card" shadow="none">
@@ -1131,12 +1597,29 @@ export default function Home() {
                 </CardBody>
               </Card>
               <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">platform status</CardHeader>
-                <CardBody>
-                  <div className="flex gap-2">
-                    <Chip color="secondary" variant="flat">x active</Chip>
-                    <Chip className="opacity-50">linkedin soon</Chip>
-                    <Chip className="opacity-50">tiktok soon</Chip>
+                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">active bot context</CardHeader>
+                <CardBody className="gap-3">
+                  <p className="text-xs text-[var(--text-dim)]">
+                    manage creation + deletion in the power user tab. this section shows which bot
+                    owns these credentials.
+                  </p>
+                  <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                    <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">active bot</p>
+                    {activeBot ? (
+                      <>
+                        <p className="mb-1">
+                          <strong>{activeBot.name}</strong>
+                        </p>
+                        <p className="mb-1 text-[var(--text-dim)]">
+                          {activeBot.productName || "no project name"} | {activeBot.productType || "type not set"}
+                        </p>
+                        <p className="text-[var(--text-dim)]">
+                          audience: {activeBot.audience || "not set"}
+                        </p>
+                      </>
+                    ) : (
+                      <p>no active bot selected. open one from power user.</p>
+                    )}
                   </div>
                 </CardBody>
               </Card>
@@ -1156,12 +1639,12 @@ export default function Home() {
                     <Button color="secondary" variant="bordered" onPress={() => today && window.open(toComposeUrl(todayCleanPost), "_blank", "noopener,noreferrer")} isDisabled={!today}>open x composer</Button>
                     <Button color="secondary" variant="ghost" onPress={markPosted} isDisabled={!today}>mark posted</Button>
                   </div>
-                  <Button color="secondary" onPress={publish} isDisabled={!hasX || !today || publishing || (!isPaid && !canUseTrialAutomation)}>
-                    {publishing ? "publishing..." : !isPaid ? "publish trial post (1 total)" : "publish today on x"}
+                  <Button color="secondary" onPress={publish} isDisabled={!hasX || !today || publishing}>
+                    {publishing ? "publishing..." : "publish today on x"}
                   </Button>
                   <Button color="secondary" onPress={runDay} isDisabled={!state.plan.length}>run autopilot day</Button>
-                  <Button color="secondary" onPress={executeTodayAutomation} isDisabled={!state.plan.length || !hasX || publishing || engaging || automationRunning || (!isPaid && !canUseTrialAutomation)}>
-                    {automationRunning ? "running automation..." : !isPaid ? "run trial automation (1 post)" : "execute today (post + comments + metrics)"}
+                  <Button color="secondary" onPress={executeTodayAutomation} isDisabled={!state.plan.length || !hasX || publishing || engaging || automationRunning}>
+                    {automationRunning ? "running automation..." : "execute today (post + comments + metrics)"}
                   </Button>
                   <Button color="secondary" variant="flat" onPress={discoverRelevantPosts} isDisabled={!hasX || !searchQuery || discovering}>
                     {discovering ? "discovering..." : "find relevant x posts"}
@@ -1215,10 +1698,13 @@ export default function Home() {
                 <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">progress</CardHeader>
                 <CardBody className="gap-3">
                   <p>plan: $10 / 14 days</p>
+                  <p>mode: build traction first, then package bots for sale</p>
                   <p className="text-xs text-[var(--text-dim)]">
                     campaign id: {state.campaignId || "none"}
                   </p>
-                  <p className={state.paid ? "text-emerald-300" : "text-[var(--text-dim)]"}>{state.paid ? "active" : "inactive"}</p>
+                  <p className={hasX ? "text-emerald-300" : "text-[var(--text-dim)]"}>
+                    {hasX ? "x connected" : "x not connected"}
+                  </p>
                   <Progress value={progress} color="secondary" />
                   <p>views: {state.views} | replies: {state.replies} | followers: {state.followers}</p>
                   <p>posted days: {postedCount}/14</p>

@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+
+const BOT_PERSONALITY =
+  "you are a new bot with a humble, slightly clumsy voice. you openly learn from people and get better through conversation.";
 import { createHmac, randomBytes } from "node:crypto";
 
 type Body = {
@@ -120,6 +123,7 @@ Goals:
 - no promo links
 - max 220 chars
 - natural builder tone
+- blend confidence with humility: "i'm new, still learning, and improving with feedback"
 
 Our product: ${context.productName}
 Audience: ${context.audience}
@@ -137,7 +141,7 @@ ${context.targetPost}
       model: "gpt-4.1-mini",
       temperature: 0.4,
       messages: [
-        { role: "system", content: "you write concise high-value social replies." },
+        { role: "system", content: `you write concise high-value social replies. ${BOT_PERSONALITY}` },
         { role: "user", content: prompt },
       ],
     }),
