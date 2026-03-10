@@ -89,7 +89,8 @@ async function uploadMediaToX(
   const mediaEndpoint = "https://upload.twitter.com/1.1/media/upload.json";
   const buffer = await fetchImageBuffer(imageUrl);
   const form = new FormData();
-  form.append("media", new Blob([buffer]), "image.png");
+  const blob = new Blob([new Uint8Array(buffer)]);
+  form.append("media", blob, "image.png");
 
   const headers: Record<string, string> = {
     Authorization: oauth1Header({
