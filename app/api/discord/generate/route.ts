@@ -7,17 +7,29 @@ type Draft = {
   sourceTitle?: string;
   sourceAuthor: string;
   sourceText: string;
+  threadMessages?: Array<{ id: string; author: string; text: string }>;
+  lastConversationMessageId?: string;
   replyText: string;
   learning: string[];
-  status?: "needs_reply" | "active";
+  status?: "needs_reply" | "needs_followup" | "waiting" | "active";
   mode: "first_reply" | "thread_followup";
+  artifactContext?: {
+    productName?: string;
+    productType?: string;
+    audience?: string;
+    intent?: string;
+    summary?: string;
+  };
+  messagesSinceCheckpoint?: Array<{ id: string; author: string; text: string }>;
+  contextCapturedUntilMessageId?: string;
+  contextCapturedMessageCount?: number;
 };
 
 type Body = {
   openaiApiKey?: string;
-  productName?: string;
-  audience?: string;
+  toneProfile?: string;
   drafts?: Draft[];
+  refresh?: boolean;
 };
 
 async function generateWithGpt(openaiApiKey: string, prompt: string, system: string): Promise<string> {
@@ -59,8 +71,15 @@ async function generateWithGpt(openaiApiKey: string, prompt: string, system: str
 
 async function draftReply(input: {
   openaiApiKey: string;
-  productName: string;
-  audience: string;
+  toneProfile: string;
+  artifactContext: {
+    productName: string;
+    productType: string;
+    audience: string;
+    intent: string;
+    summary: string;
+  };
+  messagesSinceCheckpoint: Array<{ id: string; author: string; text: string }>;
   sourceText: string;
   sourceAuthor: string;
   mode: "first_reply" | "thread_followup";
@@ -75,12 +94,26 @@ rules:
 - offer to help visibility for their product
 - no spam, no links, no hashtags
 - stay specific to their message
+- never invent product names, audiences, or brands that are not present in the provided context
+- if product context is missing, say "your project" instead of guessing
+- prioritize the latest message context
+
+tone_profile:
+${input.toneProfile}
 
 mode: ${input.mode}
-product: ${input.productName}
-audience: ${input.audience}
 author: ${input.sourceAuthor}
-message:
+artifact_context:
+- product_name: ${input.artifactContext.productName || "unknown"}
+- product_type: ${input.artifactContext.productType || "unknown"}
+- audience: ${input.artifactContext.audience || "unknown"}
+- intent: ${input.artifactContext.intent || "unknown"}
+- condensed_context: ${input.artifactContext.summary || "unknown"}
+
+enumerated_messages_since_checkpoint:
+${input.messagesSinceCheckpoint.map((msg, idx) => `#${idx + 1} [${msg.id}] @${msg.author}: ${msg.text}`).join("\n") || "none"}
+
+latest_thread_snapshot:
 ${input.sourceText}
 
 after the reply, add a separator line "###LEARNING###" and then 2 short bullet points with what the bot learned from this message.
@@ -103,9 +136,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as Body;
     const openaiApiKey = body.openaiApiKey?.trim() ?? "";
-    const productName = body.productName?.trim() || "my project";
-    const audience = body.audience?.trim() || "builders";
-    const drafts = (body.drafts ?? []).filter((d) => (d.status ?? "needs_reply") === "needs_reply");
+    const toneProfile = body.toneProfile?.trim() || "direct creator";
+    const refresh = Boolean(body.refresh);
+    const drafts = body.drafts ?? [];
 
     if (!openaiApiKey) {
       return NextResponse.json({ ok: false, error: "missing openai api key" }, { status: 400 });
@@ -113,14 +146,21 @@ export async function POST(req: NextRequest) {
 
     const out: Draft[] = [];
     for (const draft of drafts.slice(0, 20)) {
-      if (draft.replyText?.trim()) {
+      if (!refresh && draft.replyText?.trim()) {
         out.push(draft);
         continue;
       }
       const generated = await draftReply({
         openaiApiKey,
-        productName,
-        audience,
+        toneProfile,
+        artifactContext: {
+          productName: draft.artifactContext?.productName?.trim() ?? "",
+          productType: draft.artifactContext?.productType?.trim() ?? "",
+          audience: draft.artifactContext?.audience?.trim() ?? "",
+          intent: draft.artifactContext?.intent?.trim() ?? "",
+          summary: draft.artifactContext?.summary?.trim() ?? "",
+        },
+        messagesSinceCheckpoint: draft.messagesSinceCheckpoint ?? [],
         sourceText: draft.sourceText,
         sourceAuthor: draft.sourceAuthor || "unknown",
         mode: draft.mode ?? "first_reply",
@@ -138,4 +178,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
-

@@ -25,9 +25,11 @@ type Draft = {
   sourceTitle: string;
   sourceAuthor: string;
   sourceText: string;
+  threadMessages: Array<{ id: string; author: string; text: string }>;
+  lastConversationMessageId: string;
   replyText: string;
   learning: string[];
-  status: "needs_reply" | "active";
+  status: "needs_reply" | "needs_followup" | "waiting";
   mode: "first_reply" | "thread_followup";
 };
 
@@ -54,6 +56,19 @@ type ResolvedChannel = {
   scanChannels: Array<{ id: string; title: string }>;
 };
 
+function isMessageFromBot(msg: DiscordMessage | undefined, me: { id: string; username?: string }): boolean {
+  if (!msg?.author) return false;
+  const authorId = msg.author.id?.trim();
+  const meId = me.id?.trim();
+  if (authorId && meId && authorId === meId) return true;
+
+  const authorUsername = msg.author.username?.trim().toLowerCase();
+  const meUsername = me.username?.trim().toLowerCase();
+  if (authorUsername && meUsername && authorUsername === meUsername) return true;
+
+  return false;
+}
+
 function sortNewestFirst(ids: string[]): string[] {
   return [...ids].sort((a, b) => {
     try {
@@ -65,6 +80,17 @@ function sortNewestFirst(ids: string[]): string[] {
       return 0;
     }
   });
+}
+
+function compareSnowflakeAsc(a: string, b: string): number {
+  try {
+    const ai = BigInt(a);
+    const bi = BigInt(b);
+    if (ai === bi) return 0;
+    return ai < bi ? -1 : 1;
+  } catch {
+    return 0;
+  }
 }
 
 function parseInviteCode(inviteUrl: string): string {
@@ -367,7 +393,8 @@ export async function POST(req: NextRequest) {
       const body = isMissingText(original)
         ? "content hidden (enable message content intent in discord bot settings)"
         : extractMessageText(original);
-      const comments = threadMessages
+      const ordered = [...threadMessages].sort((a, b) => compareSnowflakeAsc(a.id, b.id));
+      const comments = ordered
         .slice(1)
         .map((msg) => {
           const text = extractMessageText(msg);
@@ -375,8 +402,33 @@ export async function POST(req: NextRequest) {
           return `@${author}: ${text}`;
         })
         .filter(Boolean)
-        .slice(0, 8);
-      const hasBotComment = threadMessages.slice(1).some((msg) => msg.author?.id === me.id);
+        .slice(-8);
+      const hasBotComment = ordered.slice(1).some((msg) => isMessageFromBot(msg, me));
+      const lastBotIndex = (() => {
+        for (let i = ordered.length - 1; i >= 0; i--) {
+          if (isMessageFromBot(ordered[i], me)) return i;
+        }
+        return -1;
+      })();
+      const hasHumanAfterLastBot =
+        lastBotIndex >= 0 &&
+        ordered.slice(lastBotIndex + 1).some((msg) => !isMessageFromBot(msg, me));
+      const status: Draft["status"] = !hasBotComment
+        ? "needs_reply"
+        : hasHumanAfterLastBot
+          ? "needs_followup"
+          : "waiting";
+      const mode: Draft["mode"] = hasBotComment ? "thread_followup" : "first_reply";
+      const latest = ordered[ordered.length - 1] ?? original;
+      const replyTargetId = latest.id;
+      const threadPayload = ordered
+        .map((msg) => ({
+          id: msg.id,
+          author: msg.author?.username ?? "unknown",
+          text: extractMessageText(msg),
+        }))
+        .filter((msg) => Boolean(msg.text?.trim()))
+        .slice(-20);
 
       const combinedText =
         comments.length > 0
@@ -384,15 +436,17 @@ export async function POST(req: NextRequest) {
           : `${body}\n\ncomments:\n- no comments yet`;
       drafts.push({
         draftId: `${scanChannel.id}:thread`,
-        sourceMessageId: original.id,
+        sourceMessageId: replyTargetId,
         sourceChannelId: scanChannel.id,
         sourceTitle: scanChannel.title,
         sourceAuthor: original.author?.username ?? "unknown",
         sourceText: combinedText,
+        threadMessages: threadPayload,
+        lastConversationMessageId: latest.id,
         replyText: "",
         learning: [],
-        status: hasBotComment ? "active" : "needs_reply",
-        mode: "first_reply",
+        status,
+        mode,
       });
       if (drafts.length >= 20) break;
     }

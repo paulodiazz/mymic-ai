@@ -9,14 +9,26 @@ import {
   CardBody,
   CardHeader,
   Chip,
+  Avatar,
+  Divider,
+  Image,
   Input,
+  Select,
+  SelectItem,
   Modal,
   ModalBody,
   ModalContent,
   ModalFooter,
   ModalHeader,
   Progress,
+  Pagination,
   Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableColumn,
+  TableHeader,
+  TableRow,
   Tab,
   Tabs,
   Textarea,
@@ -45,7 +57,14 @@ type DiscoverPost = {
   authorUsername: string;
   score: number;
 };
-type Day = { day: number; post: string; play: string };
+type Day = {
+  day: number;
+  post: string;
+  play: string;
+  images?: string[];
+  imagePrompt?: string;
+  imagePromptOverride?: string;
+};
 type DiscordDraft = {
   draftId: string;
   sourceMessageId: string;
@@ -53,15 +72,51 @@ type DiscordDraft = {
   sourceTitle?: string;
   sourceAuthor: string;
   sourceText: string;
+  threadMessages?: Array<{ id: string; author: string; text: string }>;
+  lastConversationMessageId?: string;
   replyText: string;
   learning: string[];
-  status?: "needs_reply" | "active";
+  status?: "needs_reply" | "needs_followup" | "waiting" | "active";
   mode: "first_reply" | "thread_followup";
 };
 type LearningItem = {
   at: string;
   sourceMessageId: string;
   notes: string[];
+};
+type ConversationArtifact = {
+  id: string;
+  draftId: string;
+  sourceMessageId: string;
+  sourceChannelId?: string;
+  sourceTitle?: string;
+  sourceAuthor: string;
+  status: "needs_reply" | "needs_followup" | "waiting" | "active";
+  productName: string;
+  productType: string;
+  audience: string;
+  intent: string;
+  actionCredentialMode: "owner" | "product";
+  xToken: string;
+  xApiKey: string;
+  xApiSecret: string;
+  xAccessToken: string;
+  xAccessTokenSecret: string;
+  plan: Day[];
+  day: number;
+  posted: number[];
+  postedTweetIds: string[];
+  views: number;
+  replies: number;
+  followers: number;
+  campaignId: string;
+  campaignArchive: CampaignSnapshot[];
+  contextSummary: string;
+  lastMessage: string;
+  lastConversationMessageId: string;
+  contextCapturedUntilMessageId: string;
+  contextCapturedMessageCount: number;
+  updatedAt: string;
 };
 type CampaignSnapshot = {
   id: string;
@@ -81,8 +136,14 @@ type BotProfile = {
   productType: string;
   audience: string;
   goal: string;
+  actionCredentialMode: "owner" | "product";
   youtubeUrl: string;
   toneProfile: string;
+  botPersonality: string;
+  campaignTone: string;
+  campaignImageCount: number;
+  campaignImageModel: string;
+  campaignImageSize: string;
   xToken: string;
   xApiKey: string;
   xApiSecret: string;
@@ -96,13 +157,42 @@ type BotProfile = {
   discordPendingDrafts: DiscordDraft[];
   discordActiveThreads: DiscordDraft[];
   discordLearningLog: LearningItem[];
+  conversationArtifacts: ConversationArtifact[];
+  plan: Day[];
+  day: number;
+  posted: number[];
+  postedTweetIds: string[];
+  views: number;
+  replies: number;
+  followers: number;
+  campaignId: string;
+  campaignArchive: CampaignSnapshot[];
   createdAt: string;
 };
 const BOT_PERSONALITY =
   "i'm a new bot, a little clumsy, but i learn fast when people help me.";
+const PRICING = {
+  inputPer1M: 0.4,
+  outputPer1M: 1.6,
+};
+const IMAGE_PRICING_MEDIUM: Record<string, number> = {
+  "1024x1024": 0.042,
+  "1024x1536": 0.063,
+  "1536x1024": 0.063,
+};
+const getImageCost = (size: string) => IMAGE_PRICING_MEDIUM[size] ?? 0.042;
+const IMAGE_MODEL_OPTIONS = [{ key: "gpt-image-1", label: "gpt-image-1" }];
+const IMAGE_SIZE_OPTIONS = [
+  { key: "1024x1024", label: "1024x1024 (square)" },
+  { key: "1024x1536", label: "1024x1536 (portrait)" },
+  { key: "1536x1024", label: "1536x1024 (landscape)" },
+];
+const CAMPAIGN_SYSTEM =
+  "you are a growth strategist writing short, high-signal campaign posts. output only valid json.";
 type AppState = {
   started: boolean;
   selectedTab: "account" | "power" | "product" | "connections" | "actions";
+  actionCredentialMode: "owner" | "product";
   productName: string;
   productType: string;
   audience: string;
@@ -110,11 +200,21 @@ type AppState = {
   youtubeUrl: string;
   openaiApiKey: string;
   toneProfile: string;
+  botPersonality: string;
+  campaignTone: string;
+  campaignImageCount: number;
+  campaignImageModel: string;
+  campaignImageSize: string;
   xToken: string;
   xApiKey: string;
   xApiSecret: string;
   xAccessToken: string;
   xAccessTokenSecret: string;
+  ownerXToken: string;
+  ownerXApiKey: string;
+  ownerXApiSecret: string;
+  ownerXAccessToken: string;
+  ownerXAccessTokenSecret: string;
   discordBotToken: string;
   discordInviteUrl: string;
   discordChannelName: string;
@@ -123,6 +223,7 @@ type AppState = {
   discordPendingDrafts: DiscordDraft[];
   discordActiveThreads: DiscordDraft[];
   discordLearningLog: LearningItem[];
+  conversationArtifacts: ConversationArtifact[];
   plan: Day[];
   day: number;
   posted: number[];
@@ -142,6 +243,7 @@ type AppState = {
 const DEFAULT_STATE: AppState = {
   started: false,
   selectedTab: "product",
+  actionCredentialMode: "owner",
   productName: "",
   productType: "",
   audience: "",
@@ -149,11 +251,21 @@ const DEFAULT_STATE: AppState = {
   youtubeUrl: "",
   openaiApiKey: "",
   toneProfile: "direct creator",
+  botPersonality: BOT_PERSONALITY,
+  campaignTone: "balanced, clear, confident",
+  campaignImageCount: 0,
+  campaignImageModel: "gpt-image-1",
+  campaignImageSize: "1024x1024",
   xToken: "",
   xApiKey: "",
   xApiSecret: "",
   xAccessToken: "",
   xAccessTokenSecret: "",
+  ownerXToken: "",
+  ownerXApiKey: "",
+  ownerXApiSecret: "",
+  ownerXAccessToken: "",
+  ownerXAccessTokenSecret: "",
   discordBotToken: "",
   discordInviteUrl: "https://discord.gg/vCpQWbkD",
   discordChannelName: "i-shipped",
@@ -162,6 +274,7 @@ const DEFAULT_STATE: AppState = {
   discordPendingDrafts: [],
   discordActiveThreads: [],
   discordLearningLog: [],
+  conversationArtifacts: [],
   plan: [],
   day: 1,
   posted: [],
@@ -178,32 +291,6 @@ const DEFAULT_STATE: AppState = {
   activeBotId: null,
 };
 
-function buildPlan(state: AppState): Day[] {
-  return Array.from({ length: 14 }, (_, i) => {
-    const day = i + 1;
-    const tone = state.toneProfile;
-    if (day % 3 === 1) {
-      return {
-        day,
-        post: `[tone: ${tone}] ${BOT_PERSONALITY} building ${state.productName} for ${state.audience}. shipped a win today. chasing ${state.goal}. what should improve next?`,
-        play: "leave thoughtful comments on 10 builder posts.",
-      };
-    }
-    if (day % 3 === 2) {
-      return {
-        day,
-        post: `[tone: ${tone}] ${BOT_PERSONALITY} lesson from today while building ${state.productName}: speed + feedback beats perfection.`,
-        play: "reply to every comment with one follow-up question.",
-      };
-    }
-    return {
-      day,
-      post: `[tone: ${tone}] ${BOT_PERSONALITY} quick update: ${state.productName} is getting traction with ${state.audience}. opening 3 early spots.`,
-      play: "join launch threads and add one concrete opinion.",
-    };
-  });
-}
-
 const toComposeUrl = (text: string): string =>
   `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
 const cleanPostText = (text: string): string =>
@@ -214,6 +301,479 @@ const newBotId = (): string =>
   `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const MASTER_EMAIL = "paulodiazg32@gmail.com";
 
+type ThreadMessage = { id: string; author: string; text: string; mine: boolean };
+
+function parseDiscordThreadMessages(
+  sourceText: string,
+  sourceAuthor: string,
+  botAliases: string[],
+): ThreadMessage[] {
+  const normalizedAliases = botAliases
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean);
+  const isMine = (author: string): boolean => {
+    const normalized = author.trim().toLowerCase();
+    if (!normalized) return false;
+    return normalizedAliases.some((alias) => alias === normalized);
+  };
+
+  const [bodyPart, commentsPart] = sourceText.split(/\n\ncomments:\n/i);
+  const out: ThreadMessage[] = [];
+
+  const body = (bodyPart ?? "").trim();
+  if (body) {
+    out.push({
+      id: `starter-${sourceAuthor}`,
+      author: sourceAuthor || "unknown",
+      text: body,
+      mine: isMine(sourceAuthor),
+    });
+  }
+
+  const commentLines = (commentsPart ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "));
+
+  for (let idx = 0; idx < commentLines.length; idx += 1) {
+    const line = commentLines[idx].replace(/^-+\s*/, "").trim();
+    const match = line.match(/^@([^:]+):\s*(.*)$/);
+    if (match) {
+      const author = match[1].trim();
+      const text = match[2].trim();
+      out.push({
+        id: `comment-${idx}-${author}`,
+        author,
+        text: text || "(empty message)",
+        mine: isMine(author),
+      });
+      continue;
+    }
+    out.push({
+      id: `comment-${idx}-unknown`,
+      author: "unknown",
+      text: line,
+      mine: false,
+    });
+  }
+
+  if (out.length === 0) {
+    out.push({
+      id: "raw-fallback",
+      author: sourceAuthor || "unknown",
+      text: sourceText,
+      mine: isMine(sourceAuthor),
+    });
+  }
+
+  return out;
+}
+
+function inferProductType(text: string): string {
+  const lower = text.toLowerCase();
+  if (lower.includes("consultant") || lower.includes("consulting")) return "consulting";
+  if (lower.includes("marketing")) return "marketing";
+  if (lower.includes("saas")) return "saas";
+  if (lower.includes("newsletter")) return "newsletter";
+  if (lower.includes("course")) return "course";
+  if (lower.includes("community")) return "community";
+  if (lower.includes("agency")) return "service";
+  if (lower.includes("app")) return "app";
+  return "";
+}
+
+function extractRelatedToPhrase(text: string): string {
+  const lower = text.toLowerCase();
+  const match = lower.match(/related to\s+([a-z0-9\s-]{3,80})/i);
+  if (!match?.[1]) return "";
+  return match[1].trim().replace(/\s+/g, " ");
+}
+
+function inferAudience(text: string): string {
+  const lower = text.toLowerCase();
+  const explicit =
+    lower.match(/audience\s+(?:is\s+)?(?:mainly\s+|mostly\s+)?([a-z0-9\s,&-]{3,120})/i)?.[1] ?? "";
+  if (explicit.trim()) return explicit.trim().replace(/\s+/g, " ");
+  const target =
+    lower.match(/(?:target|for)\s+([a-z0-9\s,&-]{3,120})/i)?.[1] ?? "";
+  if (target.trim()) return target.trim().replace(/\s+/g, " ");
+  if (lower.includes("mexican coffee")) return "mexican coffee brands";
+  if (lower.includes("founder")) return "founders";
+  if (lower.includes("creator")) return "creators";
+  if (lower.includes("developer") || lower.includes("dev")) return "developers";
+  return "";
+}
+
+function inferIntent(text: string): string {
+  const lower = text.toLowerCase();
+  if (
+    lower.includes("how do you think you could help") ||
+    lower.includes("how could you help") ||
+    lower.includes("increase visibility")
+  ) {
+    return "wants help increasing visibility";
+  }
+  if (lower.includes("marketing")) return "improve visibility and marketing";
+  if (lower.includes("feedback")) return "wants feedback";
+  if (lower.includes("looking for")) return "looking for users";
+  if (lower.includes("ship")) return "shipping update";
+  return "";
+}
+
+function buildArtifactFromDraft(
+  draft: DiscordDraft,
+  existing?: ConversationArtifact,
+): ConversationArtifact {
+  const structured = (draft.threadMessages ?? []).map((msg) => ({
+    id: msg.id,
+    author: msg.author,
+    text: msg.text,
+    mine: false,
+  }));
+  const messages =
+    structured.length > 0
+      ? structured
+      : parseDiscordThreadMessages(draft.sourceText, draft.sourceAuthor, ["mymic"]);
+  const latest = messages[messages.length - 1];
+  const latestConversationMessageId = draft.lastConversationMessageId || latest?.id || "";
+  if (existing && existing.lastConversationMessageId === latestConversationMessageId) {
+    return {
+      ...existing,
+      sourceMessageId: draft.sourceMessageId,
+      sourceChannelId: draft.sourceChannelId,
+      sourceTitle: draft.sourceTitle,
+      sourceAuthor: draft.sourceAuthor,
+      status: draft.status ?? existing.status,
+      lastMessage: latest?.text ?? existing.lastMessage,
+      lastConversationMessageId: latestConversationMessageId,
+    };
+  }
+  const body = messages.map((m) => m.text).join(" ").toLowerCase();
+  const relatedPhrase = extractRelatedToPhrase(body);
+  const inferredAudience = inferAudience(body) || existing?.audience || "";
+  const inferredIntent = inferIntent(body) || existing?.intent || "";
+  const inferredName =
+    (relatedPhrase
+      ? relatedPhrase
+          .split(" ")
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" ")
+      : "") ||
+    existing?.productName ||
+    (draft.sourceTitle && draft.sourceTitle.toLowerCase() !== "untitled thread"
+      ? draft.sourceTitle
+      : draft.sourceAuthor
+        ? `${draft.sourceAuthor}'s project`
+        : "unknown project");
+  const engagementSignal = body.includes("interested") || body.includes("okay");
+  const summaryParts = [
+    engagementSignal ? "customer engaged and asked about visibility support." : "",
+    inferredName ? `product focus: ${inferredName}.` : "",
+    inferredAudience ? `audience: ${inferredAudience}.` : "",
+    inferredIntent ? `intent: ${inferredIntent}.` : "",
+    inferProductType(body) === "consulting" ? "context indicates a consultant-led service." : "",
+    (() => {
+      const summary = summarizeThreadMessages(messages, 1400);
+      return summary ? `thread summary: ${summary}` : "";
+    })(),
+  ].filter(Boolean);
+
+  return {
+    id: existing?.id ?? `a-${draft.draftId}`,
+    draftId: draft.draftId,
+    sourceMessageId: draft.sourceMessageId,
+    sourceChannelId: draft.sourceChannelId,
+    sourceTitle: draft.sourceTitle,
+    sourceAuthor: draft.sourceAuthor,
+    status: draft.status ?? "needs_reply",
+    productName: inferredName,
+    productType: inferProductType(body) || existing?.productType || "",
+    audience: inferredAudience,
+    intent: inferredIntent,
+    actionCredentialMode: existing?.actionCredentialMode ?? "owner",
+    xToken: existing?.xToken ?? "",
+    xApiKey: existing?.xApiKey ?? "",
+    xApiSecret: existing?.xApiSecret ?? "",
+    xAccessToken: existing?.xAccessToken ?? "",
+    xAccessTokenSecret: existing?.xAccessTokenSecret ?? "",
+    plan: existing?.plan ?? [],
+    day: existing?.day ?? 1,
+    posted: existing?.posted ?? [],
+    postedTweetIds: existing?.postedTweetIds ?? [],
+    views: existing?.views ?? 0,
+    replies: existing?.replies ?? 0,
+    followers: existing?.followers ?? 0,
+    campaignId: existing?.campaignId ?? newCampaignId(),
+    campaignArchive: existing?.campaignArchive ?? [],
+    contextSummary: summaryParts.join(" ").slice(0, 2000),
+    lastMessage: latest?.text ?? "",
+    lastConversationMessageId: latestConversationMessageId,
+    contextCapturedUntilMessageId: existing?.contextCapturedUntilMessageId ?? "",
+    contextCapturedMessageCount: existing?.contextCapturedMessageCount ?? 0,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function buildCondensedContextFromMessages(
+  messages: Array<{ id: string; author: string; text: string }>,
+): { summary: string; capturedUntilMessageId: string; capturedMessageCount: number; lastMessage: string } {
+  const safe = messages.filter((m) => Boolean(m.text?.trim()));
+  const body = safe.map((m) => m.text).join(" ").toLowerCase();
+  const product = extractRelatedToPhrase(body);
+  const audience = inferAudience(body);
+  const intent = inferIntent(body);
+  const productType = inferProductType(body);
+  const engaged = body.includes("interested") || body.includes("okay");
+  const snippet = summarizeThreadMessages(safe, 1400);
+  const summary = [
+    engaged ? "customer engaged positively and continued the thread." : "",
+    product ? `product topic: ${product}.` : "",
+    productType ? `product type: ${productType}.` : "",
+    audience ? `audience: ${audience}.` : "",
+    intent ? `intent: ${intent}.` : "",
+    snippet ? `thread summary: ${snippet}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 2000);
+  const last = safe[safe.length - 1];
+  return {
+    summary,
+    capturedUntilMessageId: last?.id ?? "",
+    capturedMessageCount: safe.length,
+    lastMessage: last?.text ?? "",
+  };
+}
+
+function summarizeThreadMessages(
+  messages: Array<{ id: string; author: string; text: string }>,
+  maxChars = 1200,
+): string {
+  const safe = messages.filter((m) => Boolean(m.text?.trim()));
+  if (safe.length === 0) return "";
+  const authors = Array.from(
+    new Set(safe.map((m) => (m.author || "unknown").trim()).filter(Boolean)),
+  );
+  const normalize = (text: string) =>
+    text.replace(/\s+/g, " ").replace(/\u0000/g, "").trim();
+  const splitSentences = (text: string) =>
+    normalize(text)
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  const questions: string[] = [];
+  const goals: string[] = [];
+  const constraints: string[] = [];
+  const facts: string[] = [];
+
+  safe.forEach((m, idx) => {
+    const sentences = splitSentences(m.text || "");
+    if (sentences.length === 0) return;
+    const firstSentence = sentences[0];
+    if (idx < 2 && firstSentence) facts.push(firstSentence);
+    for (const s of sentences) {
+      const lower = s.toLowerCase();
+      if (s.includes("?") || /^(how|what|why|when|where|should|can|could|would|do)\b/.test(lower)) {
+        questions.push(s);
+        continue;
+      }
+      if (
+        /(i|we)\s+(need|want|looking for|hope|plan|are trying|are aiming)|\b(goal|objective|priority)\b/.test(
+          lower,
+        )
+      ) {
+        goals.push(s);
+        continue;
+      }
+      if (
+        /\b(can't|cannot|must|should|avoid|don't|do not|no\s+|won't)\b/.test(lower)
+      ) {
+        constraints.push(s);
+      }
+    }
+  });
+
+  const last = safe[safe.length - 1];
+  const latest = last?.text ? normalize(last.text) : "";
+
+  const uniq = (arr: string[]) => Array.from(new Set(arr.map((s) => normalize(s))).values());
+  const pick = (arr: string[], limit: number) => uniq(arr).slice(0, limit);
+
+  const parts = [
+    authors.length > 0 ? `participants: ${authors.join(", ")}.` : "",
+    facts.length > 0 ? `thread gist: ${pick(facts, 2).join(" ")}` : "",
+    goals.length > 0 ? `goals: ${pick(goals, 2).join(" ")}` : "",
+    constraints.length > 0 ? `constraints: ${pick(constraints, 2).join(" ")}` : "",
+    questions.length > 0 ? `open questions: ${pick(questions, 2).join(" ")}` : "",
+    latest ? `latest message: ${latest}` : "",
+  ].filter(Boolean);
+
+  const summary = parts.join(" ");
+  if (summary.length <= maxChars) return summary;
+  return `${summary.slice(0, Math.max(0, maxChars - 3)).trim()}...`;
+}
+
+function estimateTokensFromText(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+
+function buildCampaignPromptText(input: {
+  days: number;
+  campaignTone: string;
+  productName: string;
+  productType: string;
+  audience: string;
+  intent: string;
+  summary: string;
+}): string {
+  return `
+create a ${input.days}-day social campaign plan.
+rules:
+- output JSON array only, no prose, no code fences
+- each item: { "day": number, "post": string, "play": string }
+- post: 1-2 sentences, max 260 chars, no hashtags, no links
+- play: a concrete engagement action, 1 sentence, max 240 chars
+- stay consistent with the product context and tone
+- do not invent brands or audiences not present in the context
+
+campaign_tone: ${input.campaignTone}
+product_name: ${input.productName}
+product_type: ${input.productType}
+audience: ${input.audience}
+intent: ${input.intent}
+context_summary: ${input.summary}
+`;
+}
+
+const IMAGE_HINTS: Array<{ words: string[]; reason: string; weight: number }> = [
+  { words: ["launch", "release", "ship", "shipped", "announcement"], reason: "launch or release update", weight: 3 },
+  { words: ["demo", "walkthrough", "tour", "preview"], reason: "demo or preview moment", weight: 3 },
+  { words: ["design", "ui", "ux", "layout", "style", "branding"], reason: "visual/design update", weight: 3 },
+  { words: ["feature", "capability", "build", "update", "improvement"], reason: "feature highlight", weight: 2 },
+  { words: ["milestone", "progress", "roadmap", "next"], reason: "progress milestone", weight: 2 },
+  { words: ["before", "after", "upgrade", "refactor"], reason: "before/after story", weight: 2 },
+  { words: ["feedback", "community", "users", "customers"], reason: "community moment", weight: 1 },
+];
+
+function scoreImageFit(text: string): { score: number; reason: string } {
+  const lower = text.toLowerCase();
+  let best = { score: 0, reason: "general update" };
+  for (const hint of IMAGE_HINTS) {
+    if (hint.words.some((w) => lower.includes(w))) {
+      if (hint.weight > best.score) {
+        best = { score: hint.weight, reason: hint.reason };
+      }
+    }
+  }
+  return best;
+}
+
+function suggestImageDays(
+  plan: Day[],
+  count: number,
+  posted: number[],
+): Array<{ day: number; post: string; reason: string }> {
+  const candidates = plan.filter(
+    (item) => !(item.images?.length) && !posted.includes(item.day),
+  );
+  const scored = candidates.map((item) => {
+    const fit = scoreImageFit(item.post);
+    return { day: item.day, post: item.post, reason: fit.reason, score: fit.score };
+  });
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.day - b.day;
+  });
+  return scored.slice(0, count).map(({ day, post, reason }) => ({ day, post, reason }));
+}
+
+function getMessagesSinceCheckpoint(
+  messages: Array<{ id: string; author: string; text: string }>,
+  capturedUntilMessageId: string,
+): Array<{ id: string; author: string; text: string }> {
+  const safe = messages.filter((m) => Boolean(m.text?.trim()));
+  if (!capturedUntilMessageId) return safe;
+  const idx = safe.findIndex((m) => m.id === capturedUntilMessageId);
+  if (idx < 0) return safe;
+  return safe.slice(idx + 1);
+}
+
+function wipeConversationCache(state: AppState): AppState {
+  const clearBot = (bot: BotProfile): BotProfile => ({
+    ...bot,
+    discordSeenMessageIds: [],
+    discordPendingDrafts: [],
+    discordActiveThreads: [],
+    discordLearningLog: [],
+    conversationArtifacts: [],
+  });
+  return {
+    ...state,
+    discordSeenMessageIds: [],
+    discordPendingDrafts: [],
+    discordActiveThreads: [],
+    discordLearningLog: [],
+    conversationArtifacts: [],
+    bots: (state.bots ?? []).map(clearBot),
+  };
+}
+
+function normalizeConversationArtifact(
+  artifact: Partial<ConversationArtifact>,
+): ConversationArtifact {
+  return {
+    id: artifact.id ?? `a-${artifact.draftId ?? Date.now().toString(36)}`,
+    draftId: artifact.draftId ?? "",
+    sourceMessageId: artifact.sourceMessageId ?? "",
+    sourceChannelId: artifact.sourceChannelId,
+    sourceTitle: artifact.sourceTitle,
+    sourceAuthor: artifact.sourceAuthor ?? "unknown",
+    status: artifact.status ?? "needs_reply",
+    productName: artifact.productName ?? "",
+    productType: artifact.productType ?? "",
+    audience: artifact.audience ?? "",
+    intent: artifact.intent ?? "",
+    actionCredentialMode: artifact.actionCredentialMode ?? "owner",
+    xToken: artifact.xToken ?? "",
+    xApiKey: artifact.xApiKey ?? "",
+    xApiSecret: artifact.xApiSecret ?? "",
+    xAccessToken: artifact.xAccessToken ?? "",
+    xAccessTokenSecret: artifact.xAccessTokenSecret ?? "",
+    plan: Array.isArray(artifact.plan) ? artifact.plan : [],
+    day: artifact.day ?? 1,
+    posted: Array.isArray(artifact.posted) ? artifact.posted : [],
+    postedTweetIds: Array.isArray(artifact.postedTweetIds) ? artifact.postedTweetIds : [],
+    views: artifact.views ?? 0,
+    replies: artifact.replies ?? 0,
+    followers: artifact.followers ?? 0,
+    campaignId: artifact.campaignId ?? newCampaignId(),
+    campaignArchive: Array.isArray(artifact.campaignArchive) ? artifact.campaignArchive : [],
+    contextSummary: artifact.contextSummary ?? "",
+    lastMessage: artifact.lastMessage ?? "",
+    lastConversationMessageId: artifact.lastConversationMessageId ?? "",
+    contextCapturedUntilMessageId: artifact.contextCapturedUntilMessageId ?? "",
+    contextCapturedMessageCount: artifact.contextCapturedMessageCount ?? 0,
+    updatedAt: artifact.updatedAt ?? new Date().toISOString(),
+  };
+}
+
+function hasXConnection(input: {
+  xToken?: string;
+  xApiKey?: string;
+  xApiSecret?: string;
+  xAccessToken?: string;
+  xAccessTokenSecret?: string;
+}): boolean {
+  return (
+    Boolean(input.xToken) ||
+    (Boolean(input.xApiKey) &&
+      Boolean(input.xApiSecret) &&
+      Boolean(input.xAccessToken) &&
+      Boolean(input.xAccessTokenSecret))
+  );
+}
+
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -222,17 +782,27 @@ export default function Home() {
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authMsg, setAuthMsg] = useState("");
   const [xHelpOpen, setXHelpOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [botNameInput, setBotNameInput] = useState("");
+  const [showBotControls, setShowBotControls] = useState(false);
+  const [openBotVoiceId, setOpenBotVoiceId] = useState<string | null>(null);
+  const [toneAnalyzingBotId, setToneAnalyzingBotId] = useState<string | null>(null);
+  const [showFullPosts, setShowFullPosts] = useState(false);
+  const [campaignView, setCampaignView] = useState<"overview" | "day">("overview");
+  const [campaignDayFocus, setCampaignDayFocus] = useState(1);
+  const [imageSuggestions, setImageSuggestions] = useState<Array<{ day: number; post: string; reason: string }>>([]);
 
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
   const [stateLoaded, setStateLoaded] = useState(false);
 
   const [toneMsg, setToneMsg] = useState("");
-  const [toneLoading, setToneLoading] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [results, setResults] = useState<PublishRes[]>([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsMsg, setMetricsMsg] = useState("");
+  const [campaignGenerating, setCampaignGenerating] = useState(false);
+  const [imageGenerating, setImageGenerating] = useState(false);
+  const [planRefining, setPlanRefining] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discoveredPosts, setDiscoveredPosts] = useState<DiscoverPost[]>([]);
   const [discoverMsg, setDiscoverMsg] = useState("");
@@ -246,6 +816,7 @@ export default function Home() {
   const [discordMsg, setDiscordMsg] = useState("");
   const [discordPostingDraftId, setDiscordPostingDraftId] = useState<string | null>(null);
   const [discordViewTab, setDiscordViewTab] = useState<"needs_reply" | "active">("needs_reply");
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ x: 0, y: 0 });
   const userId = session?.user?.id;
 
@@ -291,6 +862,11 @@ export default function Home() {
         const merged = { ...DEFAULT_STATE, ...(data.state as Partial<AppState>) };
         if (!merged.campaignId) merged.campaignId = newCampaignId();
         if (!Array.isArray(merged.campaignArchive)) merged.campaignArchive = [];
+        merged.conversationArtifacts = Array.isArray(merged.conversationArtifacts)
+          ? merged.conversationArtifacts.map((item) =>
+              normalizeConversationArtifact(item as Partial<ConversationArtifact>),
+            )
+          : [];
         setState(merged);
       } else {
         await supabase
@@ -327,38 +903,227 @@ export default function Home() {
     return () => window.removeEventListener("mousemove", handleMove);
   }, []);
 
-  const hasX =
-    !!state.xToken ||
-    (!!state.xApiKey &&
-      !!state.xApiSecret &&
-      !!state.xAccessToken &&
-      !!state.xAccessTokenSecret);
-  const today = state.plan[state.day - 1];
-  const selectedTab = state.selectedTab;
-  const todayCleanPost = today ? cleanPostText(today.post) : "";
-  const scheduledDays = state.plan.slice(state.day - 1, state.day + 4);
-  const progress = Math.round((state.day / 14) * 100);
-  const postedCount = state.posted.length;
-  const isMasterUser = (session?.user?.email ?? "").toLowerCase() === MASTER_EMAIL;
-  const activeBot = state.bots.find((bot) => bot.id === state.activeBotId) ?? null;
-  const canGenerate =
-    !!state.productName && !!state.productType && !!state.audience && !!state.goal;
+  useEffect(() => {
+    if (state.conversationArtifacts.length === 0) {
+      if (selectedArtifactId !== null) setSelectedArtifactId(null);
+      return;
+    }
+    const exists = state.conversationArtifacts.some((item) => item.id === selectedArtifactId);
+    if (!exists) {
+      setSelectedArtifactId(state.conversationArtifacts[0].id);
+    }
+  }, [state.conversationArtifacts, selectedArtifactId]);
 
   useEffect(() => {
-    if (!isMasterUser && state.selectedTab === "power") {
+    if (!supabase || !userId || !stateLoaded) return;
+    const resetKey = "mymic_context_cache_reset_v1";
+    const alreadyReset = window.localStorage.getItem(resetKey) === "1";
+    if (alreadyReset) return;
+    const hasCachedContext =
+      state.conversationArtifacts.length > 0 ||
+      state.discordPendingDrafts.length > 0 ||
+      state.discordActiveThreads.length > 0 ||
+      state.discordLearningLog.length > 0 ||
+      state.bots.some(
+        (bot) =>
+          (bot.conversationArtifacts?.length ?? 0) > 0 ||
+          (bot.discordPendingDrafts?.length ?? 0) > 0 ||
+          (bot.discordActiveThreads?.length ?? 0) > 0 ||
+          (bot.discordLearningLog?.length ?? 0) > 0,
+      );
+    if (!hasCachedContext) {
+      window.localStorage.setItem(resetKey, "1");
+      return;
+    }
+    const cleaned = wipeConversationCache(state);
+    setState(cleaned);
+    setSelectedArtifactId(null);
+    setDiscordMsg("conversation context + generated replies were reset for clean testing.");
+    void supabase
+      .from("user_app_state")
+      .upsert({ user_id: userId, state: cleaned }, { onConflict: "user_id" });
+    window.localStorage.setItem(resetKey, "1");
+  }, [supabase, userId, stateLoaded, state]);
+
+  const primaryArtifact =
+    state.conversationArtifacts.find((item) => {
+      const status = item.status ?? "needs_reply";
+      return status === "needs_reply" || status === "needs_followup";
+    }) ?? state.conversationArtifacts[0] ?? null;
+  const selectedArtifact =
+    state.conversationArtifacts.find((item) => item.id === selectedArtifactId) ?? primaryArtifact;
+
+  const ownerConnections = {
+    xToken: state.ownerXToken,
+    xApiKey: state.ownerXApiKey,
+    xApiSecret: state.ownerXApiSecret,
+    xAccessToken: state.ownerXAccessToken,
+    xAccessTokenSecret: state.ownerXAccessTokenSecret,
+  };
+  const artifactConnections = {
+    xToken: selectedArtifact?.xToken ?? "",
+    xApiKey: selectedArtifact?.xApiKey ?? "",
+    xApiSecret: selectedArtifact?.xApiSecret ?? "",
+    xAccessToken: selectedArtifact?.xAccessToken ?? "",
+    xAccessTokenSecret: selectedArtifact?.xAccessTokenSecret ?? "",
+  };
+  const activeCredentialMode = selectedArtifact?.actionCredentialMode ?? "owner";
+  const activeConnections =
+    activeCredentialMode === "owner" ? ownerConnections : artifactConnections;
+  const hasProductX = hasXConnection(artifactConnections);
+  const hasOwnerX = hasXConnection(ownerConnections);
+  const hasActionX = hasXConnection(activeConnections);
+  const actionPlan = selectedArtifact?.plan ?? [];
+  const actionDay = selectedArtifact?.day ?? 1;
+  const today = actionPlan[actionDay - 1];
+  const selectedTab =
+    state.selectedTab === "account" ? "product" : state.selectedTab;
+  const todayCleanPost = today ? cleanPostText(today.post) : "";
+  const scheduledDays = actionPlan.slice(actionDay - 1, actionDay + 4);
+  const progress = actionPlan.length ? Math.round((actionDay / 14) * 100) : 0;
+  const postedCount = selectedArtifact?.posted?.length ?? 0;
+  const isMasterUser = (session?.user?.email ?? "").toLowerCase() === MASTER_EMAIL;
+  const activeBot = state.bots.find((bot) => bot.id === state.activeBotId) ?? null;
+  const displayName =
+    activeBot?.name || selectedArtifact?.productName || "mymic bot";
+  const handle = displayName
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 12) || "mymic";
+  const canGenerate =
+    !!selectedArtifact?.productName &&
+    !!selectedArtifact?.productType &&
+    !!selectedArtifact?.audience &&
+    !!selectedArtifact?.intent &&
+    !!state.openaiApiKey.trim();
+  const campaignDays = 14;
+  const imageCount = Math.min(14, Math.max(0, Math.round(state.campaignImageCount)));
+  const estimatedInputTokens = useMemo(() => {
+    const prompt = buildCampaignPromptText({
+      days: campaignDays,
+      campaignTone: state.campaignTone || "balanced, clear, confident",
+      productName: selectedArtifact?.productName ?? "unknown",
+      productType: selectedArtifact?.productType ?? "unknown",
+      audience: selectedArtifact?.audience ?? "unknown",
+      intent: selectedArtifact?.intent ?? "unknown",
+      summary: selectedArtifact?.contextSummary ?? "unknown",
+    });
+    return estimateTokensFromText(`${CAMPAIGN_SYSTEM}\n${prompt}`);
+  }, [
+    campaignDays,
+    selectedArtifact?.productName,
+    selectedArtifact?.productType,
+    selectedArtifact?.audience,
+    selectedArtifact?.intent,
+    selectedArtifact?.contextSummary,
+    state.campaignTone,
+  ]);
+  const estimatedOutputTokens = campaignDays * 120;
+  const estimatedInputCost = (estimatedInputTokens / 1_000_000) * PRICING.inputPer1M;
+  const estimatedOutputCost = (estimatedOutputTokens / 1_000_000) * PRICING.outputPer1M;
+  const estimatedImageCost = imageCount * getImageCost(state.campaignImageSize);
+  const estimatedTotalCost = estimatedInputCost + estimatedOutputCost + estimatedImageCost;
+  const newPostsCount = state.discordPendingDrafts.filter(
+    (item) => (item.status ?? "needs_reply") === "needs_reply",
+  ).length;
+  const followUpCount = state.discordPendingDrafts.filter(
+    (item) => item.status === "needs_followup",
+  ).length;
+  const waitingCount = state.discordActiveThreads.filter((item) => {
+    const status = item.status ?? "waiting";
+    return status === "waiting" || status === "active";
+  }).length;
+  const dayViewItem =
+    actionPlan.find((item) => item.day === campaignDayFocus) ?? actionPlan[0] ?? null;
+  const dayViewIsPosted = dayViewItem
+    ? (selectedArtifact?.posted ?? []).includes(dayViewItem.day)
+    : false;
+
+  useEffect(() => {
+    if (!actionPlan.length) {
+      setCampaignDayFocus(1);
+      return;
+    }
+    setCampaignDayFocus((prev) => {
+      const max = actionPlan.length;
+      const desired = selectedArtifact?.day ?? 1;
+      if (prev < 1 || prev > max) return Math.min(max, Math.max(1, desired));
+      return prev;
+    });
+  }, [actionPlan.length, selectedArtifact?.day]);
+
+  useEffect(() => {
+    if (state.selectedTab === "account") {
       setState((prev) =>
-        prev.selectedTab === "power" ? { ...prev, selectedTab: "account" } : prev,
+        prev.selectedTab === "account" ? { ...prev, selectedTab: "product" } : prev,
       );
       return;
     }
-    if (isMasterUser && state.selectedTab === "account") {
+    if (!isMasterUser && state.selectedTab === "power") {
       setState((prev) =>
-        prev.selectedTab === "account" ? { ...prev, selectedTab: "power" } : prev,
+        prev.selectedTab === "power" ? { ...prev, selectedTab: "product" } : prev,
       );
+      return;
     }
   }, [isMasterUser, state.selectedTab]);
 
   const update = (patch: Partial<AppState>) => setState((prev) => ({ ...prev, ...patch }));
+  const BOT_SCOPED_KEYS = new Set<keyof BotProfile>([
+    "productName",
+    "productType",
+    "audience",
+    "goal",
+    "actionCredentialMode",
+    "youtubeUrl",
+    "toneProfile",
+    "botPersonality",
+    "campaignTone",
+    "campaignImageCount",
+    "campaignImageModel",
+    "campaignImageSize",
+    "xToken",
+    "xApiKey",
+    "xApiSecret",
+    "xAccessToken",
+    "xAccessTokenSecret",
+    "discordBotToken",
+    "discordInviteUrl",
+    "discordChannelName",
+    "discordChannelId",
+    "discordSeenMessageIds",
+    "discordPendingDrafts",
+    "discordActiveThreads",
+    "discordLearningLog",
+    "conversationArtifacts",
+    "plan",
+    "day",
+    "posted",
+    "postedTweetIds",
+    "views",
+    "replies",
+    "followers",
+    "campaignId",
+    "campaignArchive",
+  ]);
+  const updateBotScoped = (patch: Partial<AppState>) =>
+    setState((prev) => {
+      const next = { ...prev, ...patch };
+      const activeBotId = prev.activeBotId;
+      if (!activeBotId) return next;
+      const botPatch: Partial<BotProfile> = {};
+      for (const key of Object.keys(patch) as Array<keyof AppState>) {
+        if (BOT_SCOPED_KEYS.has(key as keyof BotProfile)) {
+          (botPatch as Record<string, unknown>)[key] = patch[key] as unknown;
+        }
+      }
+      if (Object.keys(botPatch).length === 0) return next;
+      return {
+        ...next,
+        bots: prev.bots.map((bot) =>
+          bot.id === activeBotId ? { ...bot, ...botPatch } : bot,
+        ),
+      };
+    });
   const jumpTo = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -410,12 +1175,18 @@ export default function Home() {
     }
     update({
       activeBotId: null,
+      actionCredentialMode: "owner",
       productName: "",
       productType: "",
       audience: "",
       goal: "",
       youtubeUrl: "",
       toneProfile: "direct creator",
+      botPersonality: BOT_PERSONALITY,
+      campaignTone: "balanced, clear, confident",
+      campaignImageCount: 0,
+      campaignImageModel: "gpt-image-1",
+      campaignImageSize: "1024x1024",
       xToken: "",
       xApiKey: "",
       xApiSecret: "",
@@ -429,6 +1200,7 @@ export default function Home() {
       discordPendingDrafts: [],
       discordActiveThreads: [],
       discordLearningLog: [],
+      conversationArtifacts: [],
       plan: [],
       day: 1,
       posted: [],
@@ -466,8 +1238,14 @@ export default function Home() {
       productType: state.productType,
       audience: state.audience,
       goal: state.goal,
+      actionCredentialMode: state.actionCredentialMode,
       youtubeUrl: state.youtubeUrl,
       toneProfile: state.toneProfile,
+      botPersonality: state.botPersonality,
+      campaignTone: state.campaignTone,
+      campaignImageCount: state.campaignImageCount,
+      campaignImageModel: state.campaignImageModel,
+      campaignImageSize: state.campaignImageSize,
       xToken: state.xToken,
       xApiKey: state.xApiKey,
       xApiSecret: state.xApiSecret,
@@ -481,6 +1259,16 @@ export default function Home() {
       discordPendingDrafts: state.discordPendingDrafts,
       discordActiveThreads: state.discordActiveThreads,
       discordLearningLog: state.discordLearningLog,
+      conversationArtifacts: state.conversationArtifacts,
+      plan: state.plan,
+      day: state.day,
+      posted: state.posted,
+      postedTweetIds: state.postedTweetIds,
+      views: state.views,
+      replies: state.replies,
+      followers: state.followers,
+      campaignId: state.campaignId,
+      campaignArchive: state.campaignArchive,
       createdAt: activeBot?.createdAt ?? now,
     };
     const exists = state.bots.some((bot) => bot.id === nextBot.id);
@@ -507,8 +1295,14 @@ export default function Home() {
       productType: bot.productType,
       audience: bot.audience,
       goal: bot.goal,
+      actionCredentialMode: bot.actionCredentialMode ?? "owner",
       youtubeUrl: bot.youtubeUrl,
       toneProfile: bot.toneProfile,
+      botPersonality: bot.botPersonality ?? BOT_PERSONALITY,
+      campaignTone: bot.campaignTone ?? "balanced, clear, confident",
+      campaignImageCount: bot.campaignImageCount ?? 0,
+      campaignImageModel: bot.campaignImageModel ?? "gpt-image-1",
+      campaignImageSize: bot.campaignImageSize ?? "1024x1024",
       xToken: bot.xToken,
       xApiKey: bot.xApiKey,
       xApiSecret: bot.xApiSecret,
@@ -522,9 +1316,66 @@ export default function Home() {
       discordPendingDrafts: bot.discordPendingDrafts ?? [],
       discordActiveThreads: bot.discordActiveThreads ?? [],
       discordLearningLog: bot.discordLearningLog ?? [],
+      conversationArtifacts: bot.conversationArtifacts ?? [],
+      plan: bot.plan ?? [],
+      day: bot.day ?? 1,
+      posted: bot.posted ?? [],
+      postedTweetIds: bot.postedTweetIds ?? [],
+      views: bot.views ?? 0,
+      replies: bot.replies ?? 0,
+      followers: bot.followers ?? 0,
+      campaignId: bot.campaignId ?? newCampaignId(),
+      campaignArchive: bot.campaignArchive ?? [],
     });
     setBotNameInput(bot.name);
     setAuthMsg(`loaded bot "${bot.name}".`);
+  };
+
+  const updateBotVoice = (
+    botId: string,
+    patch: Partial<Pick<BotProfile, "youtubeUrl" | "toneProfile" | "botPersonality">>,
+  ) => {
+    const bot = state.bots.find((item) => item.id === botId);
+    if (!bot) return;
+    const nextBots = state.bots.map((item) => (item.id === botId ? { ...item, ...patch } : item));
+    const statePatch: Partial<AppState> = { bots: nextBots };
+    if (state.activeBotId === botId) {
+      if (typeof patch.youtubeUrl === "string") statePatch.youtubeUrl = patch.youtubeUrl;
+      if (typeof patch.toneProfile === "string") statePatch.toneProfile = patch.toneProfile;
+      if (typeof patch.botPersonality === "string") statePatch.botPersonality = patch.botPersonality;
+    }
+    update(statePatch);
+  };
+
+  const analyzeToneForBot = async (botId: string) => {
+    const bot = state.bots.find((item) => item.id === botId);
+    if (!bot?.youtubeUrl?.trim()) return;
+    setToneAnalyzingBotId(botId);
+    setToneMsg("analyzing...");
+    try {
+      const r = await fetch("/api/tone/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          youtubeUrl: bot.youtubeUrl.trim(),
+          openaiApiKey: state.openaiApiKey,
+        }),
+      });
+      const d = (await r.json()) as ToneRes;
+      if (!d.ok || !d.tone) {
+        setToneMsg(d.error || "tone analysis failed");
+        return;
+      }
+      const tone = `${d.tone.toneName}: ${d.tone.summary}`;
+      updateBotVoice(botId, { toneProfile: tone });
+      const source = d.source ?? "unknown";
+      const warning = d.warning ? ` ${d.warning}` : "";
+      setToneMsg(`tone from ${source} in "${d.title}" (${d.wordCount ?? 0} words).${warning}`);
+    } catch {
+      setToneMsg("tone analysis failed.");
+    } finally {
+      setToneAnalyzingBotId(null);
+    }
   };
 
   const removeBotConfig = (botId: string) => {
@@ -534,97 +1385,386 @@ export default function Home() {
     }
     const bot = state.bots.find((item) => item.id === botId);
     const remaining = state.bots.filter((item) => item.id !== botId);
-    update({
-      bots: remaining,
-      activeBotId:
-        state.activeBotId === botId ? (remaining.length > 0 ? remaining[0].id : null) : state.activeBotId,
-    });
+    if (state.activeBotId === botId && remaining.length > 0) {
+      const next = remaining[0];
+      update({
+        bots: remaining,
+        activeBotId: next.id,
+        productName: next.productName,
+        productType: next.productType,
+        audience: next.audience,
+        goal: next.goal,
+        actionCredentialMode: next.actionCredentialMode ?? "owner",
+        youtubeUrl: next.youtubeUrl,
+        toneProfile: next.toneProfile,
+        botPersonality: next.botPersonality ?? BOT_PERSONALITY,
+        campaignTone: next.campaignTone ?? "balanced, clear, confident",
+        campaignImageCount: next.campaignImageCount ?? 0,
+        campaignImageModel: next.campaignImageModel ?? "gpt-image-1",
+        campaignImageSize: next.campaignImageSize ?? "1024x1024",
+        xToken: next.xToken,
+        xApiKey: next.xApiKey,
+        xApiSecret: next.xApiSecret,
+        xAccessToken: next.xAccessToken,
+        xAccessTokenSecret: next.xAccessTokenSecret,
+        discordBotToken: next.discordBotToken ?? "",
+        discordInviteUrl: next.discordInviteUrl ?? "https://discord.gg/vCpQWbkD",
+        discordChannelName: next.discordChannelName ?? "i-shipped",
+        discordChannelId: next.discordChannelId ?? "",
+        discordSeenMessageIds: next.discordSeenMessageIds ?? [],
+        discordPendingDrafts: next.discordPendingDrafts ?? [],
+        discordActiveThreads: next.discordActiveThreads ?? [],
+        discordLearningLog: next.discordLearningLog ?? [],
+        conversationArtifacts: next.conversationArtifacts ?? [],
+        plan: next.plan ?? [],
+        day: next.day ?? 1,
+        posted: next.posted ?? [],
+        postedTweetIds: next.postedTweetIds ?? [],
+        views: next.views ?? 0,
+        replies: next.replies ?? 0,
+        followers: next.followers ?? 0,
+        campaignId: next.campaignId ?? newCampaignId(),
+        campaignArchive: next.campaignArchive ?? [],
+      });
+      setBotNameInput(next.name);
+    } else {
+      update({
+        bots: remaining,
+        activeBotId: state.activeBotId === botId ? null : state.activeBotId,
+      });
+    }
     setAuthMsg(bot ? `deleted bot "${bot.name}".` : "bot deleted.");
   };
 
-  const analyzeTone = async () => {
-    if (!state.youtubeUrl) return;
-    setToneLoading(true);
-    setToneMsg("analyzing...");
+  const generate = async () => {
+    if (!selectedArtifact || campaignGenerating) return;
+    syncCampaignContextFromArtifact(selectedArtifact);
+    if (!state.openaiApiKey.trim()) {
+      setAutomationMsg("add your openai api key first.");
+      return;
+    }
+    setCampaignGenerating(true);
+    setImageSuggestions([]);
+    setAutomationMsg("generating a 14-day plan...");
+    setAutomationLog([]);
     try {
-      const r = await fetch("/api/tone/analyze", {
+      const r = await fetch("/api/campaign/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          youtubeUrl: state.youtubeUrl,
           openaiApiKey: state.openaiApiKey,
+          campaignTone: state.campaignTone,
+          productName: selectedArtifact.productName,
+          productType: selectedArtifact.productType,
+          audience: selectedArtifact.audience,
+          intent: selectedArtifact.intent || state.goal,
+          summary: selectedArtifact.contextSummary,
+          days: 14,
         }),
       });
-      const d = (await r.json()) as ToneRes;
-      if (!d.ok || !d.tone) {
-        setToneMsg(d.error || "tone analysis failed");
+      const d = (await r.json()) as { ok: boolean; error?: string; plan?: Day[] };
+      if (!d.ok || !d.plan?.length) {
+        setAutomationMsg(d.error || "plan generation failed.");
         return;
       }
-      update({ toneProfile: `${d.tone.toneName}: ${d.tone.summary}` });
-      const source = d.source ?? "unknown";
-      const warning = d.warning ? ` ${d.warning}` : "";
-      setToneMsg(`tone from ${source} in "${d.title}" (${d.wordCount ?? 0} words).${warning}`);
+      const nextPlan = d.plan
+        .map((item, idx) => ({
+          day: item.day || idx + 1,
+          post: (item.post ?? "").trim(),
+          play: (item.play ?? "").trim(),
+        }))
+        .filter((item) => item.post && item.play)
+        .slice(0, 14)
+        .map((item, idx) => ({ ...item, day: item.day || idx + 1 }));
+      if (nextPlan.length === 0) {
+        setAutomationMsg("plan generation returned empty content.");
+        return;
+      }
+      const archive =
+        selectedArtifact.plan.length > 0
+          ? [
+              {
+                id: selectedArtifact.campaignId || newCampaignId(),
+                createdAt: new Date().toISOString(),
+                productName: selectedArtifact.productName,
+                plan: selectedArtifact.plan,
+                posted: selectedArtifact.posted,
+                postedTweetIds: selectedArtifact.postedTweetIds,
+                views: selectedArtifact.views,
+                replies: selectedArtifact.replies,
+                followers: selectedArtifact.followers,
+              },
+              ...selectedArtifact.campaignArchive,
+            ].slice(0, 20)
+          : selectedArtifact.campaignArchive;
+      updateConversationArtifact(selectedArtifact.id, {
+        plan: nextPlan,
+        day: 1,
+        posted: [],
+        postedTweetIds: [],
+        views: 0,
+        replies: 0,
+        followers: 0,
+        campaignId: newCampaignId(),
+        campaignArchive: archive,
+      });
+      setAutomationMsg("new 14-day schedule generated.");
+      if (state.campaignImageCount > 0) {
+        await generateImagesForPlan(nextPlan, state.campaignImageCount, []);
+      }
     } catch {
-      setToneMsg("tone analysis failed.");
+      setAutomationMsg("plan generation failed.");
     } finally {
-      setToneLoading(false);
+      setCampaignGenerating(false);
     }
   };
 
-  const generate = () => {
-    const archive =
-      state.plan.length > 0
-        ? [
-            {
-              id: state.campaignId || newCampaignId(),
-              createdAt: new Date().toISOString(),
-              productName: state.productName,
-              plan: state.plan,
-              posted: state.posted,
-              postedTweetIds: state.postedTweetIds,
-              views: state.views,
-              replies: state.replies,
-              followers: state.followers,
-            },
-            ...state.campaignArchive,
-          ].slice(0, 20)
-        : state.campaignArchive;
+  const refinePlan = async () => {
+    if (!selectedArtifact?.plan.length || planRefining) return;
+    syncCampaignContextFromArtifact(selectedArtifact);
+    if (!state.openaiApiKey.trim()) {
+      setAutomationMsg("add your openai api key first.");
+      return;
+    }
+    setPlanRefining(true);
+    setImageSuggestions([]);
+    setAutomationMsg("updating plan based on results...");
+    try {
+      const r = await fetch("/api/campaign/refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          openaiApiKey: state.openaiApiKey,
+          campaignTone: state.campaignTone,
+          productName: selectedArtifact.productName,
+          productType: selectedArtifact.productType,
+          audience: selectedArtifact.audience,
+          intent: selectedArtifact.intent || state.goal,
+          summary: selectedArtifact.contextSummary,
+          plan: selectedArtifact.plan,
+          postedDays: selectedArtifact.posted ?? [],
+          metrics: {
+            views: selectedArtifact.views ?? 0,
+            replies: selectedArtifact.replies ?? 0,
+            followers: selectedArtifact.followers ?? 0,
+          },
+        }),
+      });
+      const d = (await r.json()) as { ok: boolean; error?: string; plan?: Day[] };
+      if (!d.ok || !d.plan?.length) {
+        setAutomationMsg(d.error || "plan update failed.");
+        return;
+      }
+      const existingByDay = new Map(selectedArtifact.plan.map((item) => [item.day, item]));
+      const postedSet = new Set(selectedArtifact.posted ?? []);
+      const merged = d.plan.map((item) => {
+        const existing = existingByDay.get(item.day);
+        if (existing && postedSet.has(item.day)) return existing;
+        return {
+          ...item,
+          images: existing?.images ?? [],
+          imagePrompt: existing?.imagePrompt,
+          imagePromptOverride: existing?.imagePromptOverride,
+        };
+      });
+      updateConversationArtifact(selectedArtifact.id, { plan: merged });
+      setAutomationMsg("plan updated for remaining days.");
+    } catch {
+      setAutomationMsg("plan update failed.");
+    } finally {
+      setPlanRefining(false);
+    }
+  };
 
-    update({
-      plan: buildPlan(state),
-      day: 1,
-      posted: [],
-      postedTweetIds: [],
-      views: 0,
-      replies: 0,
-      followers: 0,
-      campaignId: newCampaignId(),
-      campaignArchive: archive,
-    });
-    setAutomationMsg("new 14-day schedule generated.");
-    setAutomationLog([]);
+  const generateImagesForPlan = async (
+    plan: Day[],
+    desiredTotal: number,
+    postedDays: number[] = selectedArtifact?.posted ?? [],
+  ) => {
+    if (!selectedArtifact || imageGenerating) return;
+    syncCampaignContextFromArtifact(selectedArtifact);
+    if (!state.openaiApiKey.trim()) {
+      setAutomationMsg("add your openai api key first.");
+      return;
+    }
+    const safeTotal = Math.min(14, Math.max(0, Math.round(desiredTotal)));
+    if (!safeTotal) {
+      setAutomationMsg("set how many images to generate first.");
+      return;
+    }
+    const existingCount = plan.filter((item) => (item.images ?? []).length > 0).length;
+    const remaining = safeTotal - existingCount;
+    if (remaining <= 0) {
+      setAutomationMsg("you already have that many images.");
+      return;
+    }
+    const suggestions = suggestImageDays(plan, remaining, postedDays);
+    setImageSuggestions(suggestions);
+    const targets = suggestions
+      .map((item) => {
+        const planItem = plan.find((p) => p.day === item.day);
+        return planItem
+          ? {
+              day: planItem.day,
+              post: planItem.post,
+              play: planItem.play,
+              imagePrompt: planItem.imagePromptOverride,
+            }
+          : null;
+      })
+      .filter(Boolean) as Array<{ day: number; post: string; play: string; imagePrompt?: string }>;
+    if (targets.length === 0) {
+      setAutomationMsg("no eligible days for images right now.");
+      return;
+    }
+    setImageGenerating(true);
+    setAutomationMsg(`generating ${targets.length} image(s)...`);
+    try {
+      const r = await fetch("/api/campaign/images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          openaiApiKey: state.openaiApiKey,
+          model: state.campaignImageModel,
+          size: state.campaignImageSize,
+          campaignTone: state.campaignTone,
+          productName: selectedArtifact.productName,
+          productType: selectedArtifact.productType,
+          audience: selectedArtifact.audience,
+          intent: selectedArtifact.intent || state.goal,
+          summary: selectedArtifact.contextSummary,
+          items: targets,
+        }),
+      });
+      const d = (await r.json()) as {
+        ok: boolean;
+        error?: string;
+        images?: Array<{ day: number; url: string; prompt: string }>;
+      };
+      if (!d.ok || !d.images?.length) {
+        setAutomationMsg(d.error || "image generation failed.");
+        return;
+      }
+      const byDay = new Map(d.images.map((img) => [img.day, img]));
+      const nextPlan = plan.map((item) => {
+        const match = byDay.get(item.day);
+        if (!match) return item;
+        const nextImages = [...(item.images ?? []), match.url].filter(Boolean);
+        return { ...item, images: nextImages, imagePrompt: match.prompt || item.imagePrompt };
+      });
+      updateConversationArtifact(selectedArtifact.id, { plan: nextPlan });
+      setAutomationMsg(`generated ${d.images.length} image(s).`);
+    } catch {
+      setAutomationMsg("image generation failed.");
+    } finally {
+      setImageGenerating(false);
+    }
+  };
+
+  const generateImageForDay = async (day: number) => {
+    if (!selectedArtifact || imageGenerating) return;
+    syncCampaignContextFromArtifact(selectedArtifact);
+    if (!state.openaiApiKey.trim()) {
+      setAutomationMsg("add your openai api key first.");
+      return;
+    }
+    const planItem = selectedArtifact.plan.find((item) => item.day === day);
+    if (!planItem) {
+      setAutomationMsg("no plan found for that day.");
+      return;
+    }
+    setImageGenerating(true);
+    setAutomationMsg(`generating image for day ${day}...`);
+    try {
+      const r = await fetch("/api/campaign/images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          openaiApiKey: state.openaiApiKey,
+          model: state.campaignImageModel,
+          size: state.campaignImageSize,
+          campaignTone: state.campaignTone,
+          productName: selectedArtifact.productName,
+          productType: selectedArtifact.productType,
+          audience: selectedArtifact.audience,
+          intent: selectedArtifact.intent || state.goal,
+          summary: selectedArtifact.contextSummary,
+          items: [
+            {
+              day: planItem.day,
+              post: planItem.post,
+              play: planItem.play,
+              imagePrompt: planItem.imagePromptOverride,
+            },
+          ],
+        }),
+      });
+      const d = (await r.json()) as {
+        ok: boolean;
+        error?: string;
+        images?: Array<{ day: number; url: string; prompt: string }>;
+      };
+      if (!d.ok || !d.images?.length) {
+        setAutomationMsg(d.error || "image generation failed.");
+        return;
+      }
+      const match = d.images.find((img) => img.day === day) ?? d.images[0];
+      const nextPlan = selectedArtifact.plan.map((item) => {
+        if (item.day !== day) return item;
+        const nextImages = [...(item.images ?? []), match.url].filter(Boolean);
+        return { ...item, images: nextImages, imagePrompt: match.prompt || item.imagePrompt };
+      });
+      updateConversationArtifact(selectedArtifact.id, { plan: nextPlan });
+      setAutomationMsg(`image generated for day ${day}.`);
+    } catch {
+      setAutomationMsg("image generation failed.");
+    } finally {
+      setImageGenerating(false);
+    }
+  };
+
+  const updateDayImagePrompt = (day: number, value: string) => {
+    if (!selectedArtifact) return;
+    const nextPlan = selectedArtifact.plan.map((item) =>
+      item.day === day ? { ...item, imagePromptOverride: value } : item,
+    );
+    updateConversationArtifact(selectedArtifact.id, { plan: nextPlan });
   };
 
   const runDay = () => {
-    if (!state.plan.length) return;
-    const d = state.day;
-    update({ day: Math.min(14, d + 1) });
+    if (!selectedArtifact?.plan.length) return;
+    const d = selectedArtifact.day;
+    updateConversationArtifact(selectedArtifact.id, { day: Math.min(14, d + 1) });
   };
 
   const searchQuery = useMemo(() => {
-    const parts = [state.productName, state.productType, state.audience]
+    const parts = [
+      selectedArtifact?.productName ?? state.productName,
+      selectedArtifact?.productType ?? state.productType,
+      selectedArtifact?.audience ?? state.audience,
+    ]
       .map((p) => p.trim())
       .filter(Boolean);
     return parts.join(" ");
-  }, [state.productName, state.productType, state.audience]);
+  }, [
+    selectedArtifact?.productName,
+    selectedArtifact?.productType,
+    selectedArtifact?.audience,
+    state.productName,
+    state.productType,
+    state.audience,
+  ]);
 
   const markPosted = () => {
-    if (!today || state.posted.includes(state.day)) return;
-    update({ posted: [...state.posted, state.day].sort((a, b) => a - b) });
+    if (!selectedArtifact || !today) return;
+    if (selectedArtifact.posted.includes(selectedArtifact.day)) return;
+    updateConversationArtifact(selectedArtifact.id, {
+      posted: [...selectedArtifact.posted, selectedArtifact.day].sort((a, b) => a - b),
+    });
   };
 
   const publish = async () => {
-    if (!today || publishing) return;
+    if (!selectedArtifact || !today || publishing) return;
     setPublishing(true);
     setResults([]);
     try {
@@ -633,30 +1773,73 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: todayCleanPost,
-          campaignId: state.campaignId,
-          day: state.day,
+          images: today?.images ?? [],
+          campaignId: selectedArtifact.campaignId,
+          day: selectedArtifact.day,
           platforms: ["x"],
-          connections: {
-            xToken: state.xToken,
-            xApiKey: state.xApiKey,
-            xApiSecret: state.xApiSecret,
-            xAccessToken: state.xAccessToken,
-            xAccessTokenSecret: state.xAccessTokenSecret,
-          },
+          connections: activeConnections,
         }),
       });
       const d = (await r.json()) as { results?: PublishRes[] };
       const next = d.results ?? [];
       setResults(next);
       if (next.some((item) => item.ok)) {
-        markPosted();
+        const nextPosted = selectedArtifact.posted.includes(selectedArtifact.day)
+          ? selectedArtifact.posted
+          : [...selectedArtifact.posted, selectedArtifact.day].sort((a, b) => a - b);
         const ids = next.map((item) => item.postId).filter((id): id is string => Boolean(id));
         const nextPostedIds = ids.length
-          ? Array.from(new Set([...state.postedTweetIds, ...ids]))
-          : state.postedTweetIds;
-        update({
+          ? Array.from(new Set([...selectedArtifact.postedTweetIds, ...ids]))
+          : selectedArtifact.postedTweetIds;
+        updateConversationArtifact(selectedArtifact.id, {
+          posted: nextPosted,
           postedTweetIds: nextPostedIds,
-          day: Math.min(14, state.day + 1),
+          day: Math.min(14, selectedArtifact.day + 1),
+        });
+      }
+    } catch {
+      setResults([{ platform: "x", ok: false, message: "publish failed." }]);
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const publishDay = async (day: number) => {
+    if (!selectedArtifact || publishing) return;
+    const planItem = selectedArtifact.plan.find((item) => item.day === day);
+    if (!planItem) {
+      setAutomationMsg("no plan found for that day.");
+      return;
+    }
+    setPublishing(true);
+    setResults([]);
+    try {
+      const r = await fetch("/api/social/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: cleanPostText(planItem.post),
+          images: planItem.images ?? [],
+          campaignId: selectedArtifact.campaignId,
+          day,
+          platforms: ["x"],
+          connections: activeConnections,
+        }),
+      });
+      const d = (await r.json()) as { results?: PublishRes[] };
+      const next = d.results ?? [];
+      setResults(next);
+      if (next.some((item) => item.ok)) {
+        const nextPosted = selectedArtifact.posted.includes(day)
+          ? selectedArtifact.posted
+          : [...selectedArtifact.posted, day].sort((a, b) => a - b);
+        const ids = next.map((item) => item.postId).filter((id): id is string => Boolean(id));
+        const nextPostedIds = ids.length
+          ? Array.from(new Set([...selectedArtifact.postedTweetIds, ...ids]))
+          : selectedArtifact.postedTweetIds;
+        updateConversationArtifact(selectedArtifact.id, {
+          posted: nextPosted,
+          postedTweetIds: nextPostedIds,
         });
       }
     } catch {
@@ -667,8 +1850,12 @@ export default function Home() {
   };
 
   const refreshRealMetrics = async () => {
-    if (!hasX) {
-      setMetricsMsg("connect x credentials first.");
+    if (!hasActionX) {
+      setMetricsMsg(
+        activeCredentialMode === "owner"
+          ? "connect owner x credentials first."
+          : "connect product x credentials first.",
+      );
       return;
     }
     setMetricsLoading(true);
@@ -678,14 +1865,8 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tweetIds: state.postedTweetIds,
-          connections: {
-            xToken: state.xToken,
-            xApiKey: state.xApiKey,
-            xApiSecret: state.xApiSecret,
-            xAccessToken: state.xAccessToken,
-            xAccessTokenSecret: state.xAccessTokenSecret,
-          },
+          tweetIds: selectedArtifact?.postedTweetIds ?? [],
+          connections: activeConnections,
         }),
       });
       const d = (await r.json()) as {
@@ -700,11 +1881,13 @@ export default function Home() {
         setMetricsMsg(d.error ?? "could not load live metrics.");
         return;
       }
-      update({
-        views: d.metrics.views ?? 0,
-        replies: d.metrics.replies ?? 0,
-        followers: d.metrics.followers ?? 0,
-      });
+      if (selectedArtifact) {
+        updateConversationArtifact(selectedArtifact.id, {
+          views: d.metrics.views ?? 0,
+          replies: d.metrics.replies ?? 0,
+          followers: d.metrics.followers ?? 0,
+        });
+      }
       const warning = d.warning ? ` ${d.warning}` : "";
       setMetricsMsg(`live metrics synced from ${d.account ?? "x account"} (${d.source ?? "x"}).${warning}`);
     } catch {
@@ -715,7 +1898,7 @@ export default function Home() {
   };
 
   const discoverRelevantPosts = async () => {
-    if (!hasX || !searchQuery) return;
+    if (!hasActionX || !searchQuery) return;
     setDiscovering(true);
     setDiscoverMsg("finding relevant posts...");
     try {
@@ -725,13 +1908,7 @@ export default function Home() {
         body: JSON.stringify({
           query: searchQuery,
           maxResults: 10,
-          connections: {
-            xToken: state.xToken,
-            xApiKey: state.xApiKey,
-            xApiSecret: state.xApiSecret,
-            xAccessToken: state.xAccessToken,
-            xAccessTokenSecret: state.xAccessTokenSecret,
-          },
+          connections: activeConnections,
         }),
       });
       const d = (await r.json()) as { ok: boolean; error?: string; posts?: DiscoverPost[] };
@@ -750,7 +1927,7 @@ export default function Home() {
   };
 
   const autoCommentTopPosts = async () => {
-    if (!hasX || !searchQuery || engaging) return;
+    if (!hasActionX || !searchQuery || engaging) return;
     setEngaging(true);
     setEngageMsg("posting replies...");
     try {
@@ -759,17 +1936,11 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: searchQuery,
-          productName: state.productName,
-          audience: state.audience,
+          productName: selectedArtifact?.productName || state.productName,
+          audience: selectedArtifact?.audience || state.audience,
           openaiApiKey: state.openaiApiKey,
           maxReplies: 2,
-          connections: {
-            xToken: state.xToken,
-            xApiKey: state.xApiKey,
-            xApiSecret: state.xApiSecret,
-            xAccessToken: state.xAccessToken,
-            xAccessTokenSecret: state.xAccessTokenSecret,
-          },
+          connections: activeConnections,
         }),
       });
       const d = (await r.json()) as {
@@ -865,17 +2036,52 @@ export default function Home() {
           learning: item.learning.length > 0 ? item.learning : existing.learning,
         };
       });
-      const pending = incoming.filter((item) => (item.status ?? "needs_reply") === "needs_reply");
-      const active = incoming.filter((item) => item.status === "active");
-      update({
+      const pending = incoming.filter((item) => {
+        const status = item.status ?? "needs_reply";
+        return status === "needs_reply" || status === "needs_followup";
+      });
+      const active = incoming.filter((item) => {
+        const status = item.status ?? "waiting";
+        return status === "waiting" || status === "active";
+      });
+      const previousArtifacts = new Map(
+        state.conversationArtifacts.map((item) => [item.draftId, item]),
+      );
+      const artifactMap = new Map<string, ConversationArtifact>();
+      for (const item of incoming) {
+        const prev = previousArtifacts.get(item.draftId);
+        artifactMap.set(item.draftId, buildArtifactFromDraft(item, prev));
+      }
+      for (const [draftId, artifact] of previousArtifacts.entries()) {
+        if (!artifactMap.has(draftId)) {
+          artifactMap.set(draftId, artifact);
+        }
+      }
+      const mergedArtifacts = Array.from(artifactMap.values())
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+        .slice(0, 300);
+      const seedArtifact =
+        mergedArtifacts.find((item) => item.productName || item.audience || item.productType) ?? null;
+
+      updateBotScoped({
         discordChannelId: d.channelId ?? state.discordChannelId,
         discordChannelName: d.channelName ?? state.discordChannelName,
         discordPendingDrafts: pending.slice(0, 100),
         discordActiveThreads: active.slice(0, 100),
+        conversationArtifacts: mergedArtifacts,
+        productName:
+          state.productName ||
+          seedArtifact?.productName ||
+          (state.productName || botNameInput || "my project"),
+        productType: state.productType || seedArtifact?.productType || state.productType,
+        audience: state.audience || seedArtifact?.audience || state.audience,
       });
+      if (mergedArtifacts.length > 0) {
+        setSelectedArtifactId(mergedArtifacts[0].id);
+      }
       setDiscordMsg(
         incoming.length > 0
-          ? `scanned ${incoming.length} threads. needs reply: ${pending.length}, active: ${active.length}.`
+          ? `scanned ${incoming.length} threads. new: ${pending.filter((i) => (i.status ?? "needs_reply") === "needs_reply").length}, follow-up: ${pending.filter((i) => i.status === "needs_followup").length}, waiting: ${active.length}.`
           : `no posts found. scanned ${d.stats?.threadCount ?? 0} thread(s), ${d.stats?.messageCount ?? 0} message(s).`,
       );
     } catch {
@@ -898,14 +2104,50 @@ export default function Home() {
     setDiscordGenerating(true);
     setDiscordMsg(`generating replies for ${targets.length} thread(s)...`);
     try {
+      const artifactByDraftId = new Map(
+        state.conversationArtifacts.map((artifact) => [artifact.draftId, artifact]),
+      );
+      const checkpointByDraftId = new Map<
+        string,
+        {
+          summary: string;
+          capturedUntilMessageId: string;
+          capturedMessageCount: number;
+          lastMessage: string;
+        }
+      >();
+      for (const draft of targets) {
+        const condensed = buildCondensedContextFromMessages(draft.threadMessages ?? []);
+        checkpointByDraftId.set(draft.draftId, condensed);
+      }
       const r = await fetch("/api/discord/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           openaiApiKey: state.openaiApiKey,
-          productName: state.productName || botNameInput || "my project",
-          audience: state.audience || "builders",
-          drafts: targets,
+          toneProfile: state.toneProfile,
+          drafts: targets.map((draft) => {
+            const artifact = artifactByDraftId.get(draft.draftId);
+            const checkpoint = checkpointByDraftId.get(draft.draftId);
+            return {
+              ...draft,
+              artifactContext: {
+                productName: artifact?.productName || "",
+                productType: artifact?.productType || "",
+                audience: artifact?.audience || "",
+                intent: artifact?.intent || "",
+                summary: checkpoint?.summary || artifact?.contextSummary || "",
+              },
+              messagesSinceCheckpoint: getMessagesSinceCheckpoint(
+                draft.threadMessages ?? [],
+                artifact?.contextCapturedUntilMessageId ?? "",
+              ),
+              contextCapturedUntilMessageId:
+                checkpoint?.capturedUntilMessageId || artifact?.contextCapturedUntilMessageId,
+              contextCapturedMessageCount:
+                checkpoint?.capturedMessageCount || artifact?.contextCapturedMessageCount || 0,
+            };
+          }),
         }),
       });
       const d = (await r.json()) as { ok: boolean; error?: string; drafts?: DiscordDraft[] };
@@ -924,12 +2166,123 @@ export default function Home() {
             }
           : draft;
       });
-      update({ discordPendingDrafts: nextPending });
+      const nextArtifacts = state.conversationArtifacts.map((artifact) => {
+        const checkpoint = checkpointByDraftId.get(artifact.draftId);
+        if (!checkpoint) return artifact;
+        return {
+          ...artifact,
+          contextSummary: checkpoint.summary || artifact.contextSummary,
+          contextCapturedUntilMessageId:
+            checkpoint.capturedUntilMessageId || artifact.contextCapturedUntilMessageId,
+          contextCapturedMessageCount:
+            checkpoint.capturedMessageCount || artifact.contextCapturedMessageCount,
+          lastMessage: checkpoint.lastMessage || artifact.lastMessage,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      updateBotScoped({ discordPendingDrafts: nextPending, conversationArtifacts: nextArtifacts });
       setDiscordMsg(`generated ${generated.size} reply draft(s).`);
     } catch {
       setDiscordMsg("could not generate replies.");
     } finally {
       setDiscordGenerating(false);
+    }
+  };
+
+  const refreshDiscordDraftReply = async (
+    draft: DiscordDraft,
+    bucket: "pending" | "active",
+  ) => {
+    if (!state.openaiApiKey.trim()) {
+      setDiscordMsg("add your openai api key first.");
+      return;
+    }
+    const artifact = state.conversationArtifacts.find((item) => item.draftId === draft.draftId);
+    const checkpointChanged =
+      (artifact?.contextCapturedUntilMessageId ?? "") !==
+      (draft.lastConversationMessageId ?? "");
+    if (!checkpointChanged) {
+      setDiscordMsg("no new messages since last checkpoint. context and reply are up to date.");
+      return;
+    }
+
+    setDiscordPostingDraftId(draft.draftId);
+    setDiscordMsg("new messages detected, updating context and refreshing reply...");
+    try {
+      const condensed = buildCondensedContextFromMessages(draft.threadMessages ?? []);
+      const r = await fetch("/api/discord/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          openaiApiKey: state.openaiApiKey,
+          toneProfile: state.toneProfile,
+          refresh: true,
+          drafts: [
+            {
+              ...draft,
+              artifactContext: {
+                productName: artifact?.productName || "",
+                productType: artifact?.productType || "",
+                audience: artifact?.audience || "",
+                intent: artifact?.intent || "",
+                summary: condensed.summary || artifact?.contextSummary || "",
+              },
+              messagesSinceCheckpoint: getMessagesSinceCheckpoint(
+                draft.threadMessages ?? [],
+                artifact?.contextCapturedUntilMessageId ?? "",
+              ),
+              contextCapturedUntilMessageId:
+                condensed.capturedUntilMessageId || artifact?.contextCapturedUntilMessageId,
+              contextCapturedMessageCount:
+                condensed.capturedMessageCount || artifact?.contextCapturedMessageCount || 0,
+            },
+          ],
+        }),
+      });
+      const d = (await r.json()) as { ok: boolean; error?: string; drafts?: DiscordDraft[] };
+      if (!d.ok || !(d.drafts?.length)) {
+        setDiscordMsg(d.error ?? "could not refresh reply.");
+        return;
+      }
+      const nextDraft = d.drafts[0];
+      if (bucket === "pending") {
+        updateBotScoped({
+          discordPendingDrafts: state.discordPendingDrafts.map((item) =>
+            item.draftId === draft.draftId
+              ? { ...item, replyText: nextDraft.replyText, learning: nextDraft.learning }
+              : item,
+          ),
+        });
+      } else {
+        updateBotScoped({
+          discordActiveThreads: state.discordActiveThreads.map((item) =>
+            item.draftId === draft.draftId
+              ? { ...item, replyText: nextDraft.replyText, learning: nextDraft.learning }
+              : item,
+          ),
+        });
+      }
+      updateBotScoped({
+        conversationArtifacts: state.conversationArtifacts.map((item) =>
+          item.draftId === draft.draftId
+            ? {
+                ...item,
+                contextSummary: condensed.summary || item.contextSummary,
+                contextCapturedUntilMessageId:
+                  condensed.capturedUntilMessageId || item.contextCapturedUntilMessageId,
+                contextCapturedMessageCount:
+                  condensed.capturedMessageCount || item.contextCapturedMessageCount,
+                lastMessage: condensed.lastMessage || item.lastMessage,
+                updatedAt: new Date().toISOString(),
+              }
+            : item,
+        ),
+      });
+      setDiscordMsg("new messages detected. context updated and reply refreshed.");
+    } catch {
+      setDiscordMsg("could not refresh reply.");
+    } finally {
+      setDiscordPostingDraftId(null);
     }
   };
 
@@ -959,12 +2312,22 @@ export default function Home() {
         setDiscordMsg(d.error ?? "could not post approved reply.");
         return;
       }
-      update({
+      updateBotScoped({
         discordPendingDrafts: state.discordPendingDrafts.filter((item) => item.draftId !== draftId),
         discordActiveThreads: [
-          { ...draft, status: "active" as const },
+          { ...draft, status: "waiting" as const },
           ...state.discordActiveThreads.filter((item) => item.draftId !== draftId),
         ].slice(0, 100),
+        conversationArtifacts: state.conversationArtifacts.map((item) =>
+          item.draftId === draftId
+            ? {
+                ...item,
+                status: "waiting",
+                lastMessage: draft.replyText || item.lastMessage,
+                updatedAt: new Date().toISOString(),
+              }
+            : item,
+        ),
         discordSeenMessageIds: Array.from(
           new Set([...state.discordSeenMessageIds, draft.sourceMessageId]),
         ).slice(-500),
@@ -983,7 +2346,7 @@ export default function Home() {
   };
 
   const updateDiscordDraftReply = (draftId: string, replyText: string) => {
-    update({
+    updateBotScoped({
       discordPendingDrafts: state.discordPendingDrafts.map((draft) =>
         draft.draftId === draftId ? { ...draft, replyText } : draft,
       ),
@@ -991,10 +2354,33 @@ export default function Home() {
   };
 
   const updateActiveDraftReply = (draftId: string, replyText: string) => {
-    update({
+    updateBotScoped({
       discordActiveThreads: state.discordActiveThreads.map((draft) =>
         draft.draftId === draftId ? { ...draft, replyText } : draft,
       ),
+    });
+  };
+
+  const updateConversationArtifact = (
+    artifactId: string,
+    patch: Partial<ConversationArtifact>,
+  ) => {
+    updateBotScoped({
+      conversationArtifacts: state.conversationArtifacts.map((artifact) =>
+        artifact.id === artifactId
+          ? { ...artifact, ...patch, updatedAt: new Date().toISOString() }
+          : artifact,
+      ),
+    });
+  };
+
+  const syncCampaignContextFromArtifact = (artifact?: ConversationArtifact | null) => {
+    if (!artifact) return;
+    updateBotScoped({
+      productName: artifact.productName || state.productName,
+      productType: artifact.productType || state.productType,
+      audience: artifact.audience || state.audience,
+      goal: artifact.intent || state.goal,
     });
   };
 
@@ -1028,6 +2414,18 @@ export default function Home() {
         setDiscordMsg(d.error ?? "could not post active reply.");
         return;
       }
+      updateBotScoped({
+        conversationArtifacts: state.conversationArtifacts.map((item) =>
+          item.draftId === draftId
+            ? {
+                ...item,
+                status: "waiting",
+                lastMessage: draft.replyText || item.lastMessage,
+                updatedAt: new Date().toISOString(),
+              }
+            : item,
+        ),
+      });
       setDiscordMsg("active reply posted.");
     } catch {
       setDiscordMsg("could not post active reply.");
@@ -1241,17 +2639,6 @@ export default function Home() {
             <Button className="justify-start" color="secondary" variant="flat" onPress={() => update({ started: false })}>
               Home
             </Button>
-            <Button
-              className="justify-start"
-              color="secondary"
-              variant={selectedTab === "account" ? "solid" : "flat"}
-              onPress={() => {
-                update({ selectedTab: "account" });
-                jumpTo("workflow-section");
-              }}
-            >
-              Account
-            </Button>
             {isMasterUser && (
               <Button
                 className="justify-start"
@@ -1301,7 +2688,9 @@ export default function Home() {
             </Button>
             <div className="mt-3 rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] bg-black/25 p-3 text-xs">
               <p className="uppercase tracking-[0.14em] text-[var(--text-dim)]">Campaign</p>
-              <p className="mt-1 text-[var(--text-primary)]">{hasX ? "ready" : "needs x connection"}</p>
+              <p className="mt-1 text-[var(--text-primary)]">
+                {hasActionX ? "ready" : "needs selected x connection"}
+              </p>
               <p className="text-[var(--text-dim)]">posted {postedCount}/14</p>
             </div>
           </CardBody>
@@ -1316,12 +2705,15 @@ export default function Home() {
               growth console
             </h1>
           </div>
-          <Badge
+          <Button
+            color="secondary"
             variant="flat"
-            className="border border-[color:color-mix(in_srgb,var(--glow-pink)_55%,transparent)] bg-[color:color-mix(in_srgb,var(--surface)_82%,transparent)] px-3 py-2 font-[family-name:var(--font-space-mono)] text-[var(--text-primary)]"
+            aria-label="open account"
+            onPress={() => setAccountOpen(true)}
+            className="font-[family-name:var(--font-space-mono)]"
           >
-            x live | linkedin/tiktok soon
-          </Badge>
+            ACCOUNT
+          </Button>
         </div>
 
         <Card className="cyber-card mb-6" shadow="none">
@@ -1341,25 +2733,1063 @@ export default function Home() {
           selectedKey={selectedTab}
           onSelectionChange={(key) =>
             update({
-              selectedTab: String(key) as "account" | "power" | "product" | "connections" | "actions",
+              selectedTab: String(key) as "power" | "product" | "connections" | "actions",
             })
           }
           classNames={{ tab: "font-[family-name:var(--font-space-mono)] uppercase tracking-wider" }}
         >
-          <Tab key="account" title="Account">
-            <Card id="account-section" className="cyber-card mt-4" shadow="none">
-              <CardHeader className="flex items-center justify-between gap-3 pb-0">
-                <div>
-                  <p className="font-[family-name:var(--font-orbitron)] uppercase">account</p>
-                  <p className="mt-1 text-xs text-[var(--text-dim)]">
-                    connect your account to save and sync your bot workspace.
+          {isMasterUser && (
+            <Tab key="power" title="Power User">
+              <div className="mt-4 grid gap-6 lg:grid-cols-2">
+                <Card className="cyber-card lg:col-span-2" shadow="none">
+                  <CardHeader className="pb-0">
+                    <div className="flex w-full items-center justify-between gap-3">
+                      <span className="font-[family-name:var(--font-orbitron)] uppercase">
+                        project bots
+                      </span>
+                      <Button
+                        size="sm"
+                        color="secondary"
+                        variant={showBotControls ? "flat" : "solid"}
+                        onPress={() => {
+                          if (!showBotControls) clearWorkspaceForNewBot();
+                          setShowBotControls((prev) => !prev);
+                        }}
+                        isDisabled={!session || !isMasterUser}
+                      >
+                        {showBotControls ? "close" : "add bot"}
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardBody className="gap-3 text-sm">
+                    {showBotControls && (
+                      <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                        <p className="mb-2 font-[family-name:var(--font-orbitron)] text-xs uppercase text-[var(--text-dim)]">
+                          bot controls
+                        </p>
+                        <Input
+                          label="bot name"
+                          value={botNameInput}
+                          onValueChange={setBotNameInput}
+                          isDisabled={!session || !isMasterUser}
+                        />
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          <Button
+                            color="secondary"
+                            onPress={() => saveBotConfig(true)}
+                            isDisabled={!session || !isMasterUser}
+                          >
+                            create new bot
+                          </Button>
+                          <Button
+                            color="secondary"
+                            variant="flat"
+                            onPress={() => saveBotConfig(false)}
+                            isDisabled={!session || !isMasterUser || !state.activeBotId}
+                          >
+                            save changes
+                          </Button>
+                          <Button
+                            color="secondary"
+                            variant="bordered"
+                            onPress={clearWorkspaceForNewBot}
+                            isDisabled={!session || !isMasterUser}
+                          >
+                            clear workspace
+                          </Button>
+                          <Button
+                            color="secondary"
+                            variant="ghost"
+                            isDisabled={!session || !state.activeBotId}
+                            onPress={() => state.activeBotId && loadBotConfig(state.activeBotId)}
+                          >
+                            reload active bot
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    {showBotControls && <div className="h-px bg-white/10" />}
+                    {state.bots.length === 0 ? (
+                      <p>no bots yet. create your first project bot.</p>
+                    ) : (
+                      state.bots.map((bot) => {
+                        const isActive = bot.id === state.activeBotId;
+                        return (
+                          <div
+                            key={bot.id}
+                            className={`rounded-lg border p-3 ${
+                              isActive
+                                ? "border-emerald-400/60 bg-emerald-500/10"
+                                : "border-white/10 bg-black/20"
+                            }`}
+                          >
+                            <p>
+                              <strong>{bot.name}</strong> {isActive ? "(active)" : ""}
+                            </p>
+                            <p className="text-xs text-[var(--text-dim)]">
+                              {bot.productName || "no project name"} | {bot.productType || "type not set"}
+                            </p>
+                            <p className="text-xs text-[var(--text-dim)]">
+                              audience: {bot.audience || "not set"}
+                            </p>
+                            <p className="text-xs text-[var(--text-dim)]">
+                              credential mode: {bot.actionCredentialMode || "owner"}
+                            </p>
+                            <p className="text-xs text-[var(--text-dim)]">
+                              plan day: {bot.day || 1} | posted: {(bot.posted ?? []).length}/14
+                            </p>
+                            <p className="text-xs text-[var(--text-dim)]">
+                              tone: {bot.toneProfile || "not set"}
+                            </p>
+                            <p className="text-xs text-[var(--text-dim)]">
+                              personality: {bot.botPersonality || BOT_PERSONALITY}
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                color="secondary"
+                                variant={isActive ? "solid" : "flat"}
+                                onPress={() => loadBotConfig(bot.id)}
+                              >
+                                select
+                              </Button>
+                              <Button
+                                size="sm"
+                                color="secondary"
+                                variant="flat"
+                                onPress={() =>
+                                  setOpenBotVoiceId((prev) => (prev === bot.id ? null : bot.id))
+                                }
+                              >
+                                open
+                              </Button>
+                              <Button
+                                size="sm"
+                                color="danger"
+                                variant="light"
+                                onPress={() => removeBotConfig(bot.id)}
+                                isDisabled={!isMasterUser}
+                              >
+                                delete
+                              </Button>
+                            </div>
+                            {openBotVoiceId === bot.id && (
+                              <div className="mt-3 grid gap-2 rounded-lg border border-white/10 bg-black/30 p-3">
+                                <Input
+                                  size="sm"
+                                  label="youtube url (tone source)"
+                                  value={bot.youtubeUrl || ""}
+                                  onValueChange={(v) => updateBotVoice(bot.id, { youtubeUrl: v })}
+                                />
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    color="secondary"
+                                    variant="flat"
+                                    onPress={() => analyzeToneForBot(bot.id)}
+                                    isLoading={toneAnalyzingBotId === bot.id}
+                                    isDisabled={!bot.youtubeUrl?.trim()}
+                                  >
+                                    {toneAnalyzingBotId === bot.id ? "analyzing..." : "extract tone"}
+                                  </Button>
+                                  <p className="text-xs text-[var(--text-dim)]">
+                                    {toneMsg || "extract tone from youtube or set it manually."}
+                                  </p>
+                                </div>
+                                <Input
+                                  size="sm"
+                                  label="tone (manual)"
+                                  value={bot.toneProfile || ""}
+                                  onValueChange={(v) => updateBotVoice(bot.id, { toneProfile: v })}
+                                />
+                                <Textarea
+                                  size="sm"
+                                  label="personality"
+                                  minRows={2}
+                                  value={bot.botPersonality || BOT_PERSONALITY}
+                                  onValueChange={(v) => updateBotVoice(bot.id, { botPersonality: v })}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </CardBody>
+                </Card>
+                <Card className="cyber-card lg:col-span-2" shadow="none">
+                  <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+                    discord approvals
+                  </CardHeader>
+                  <CardBody className="gap-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Input
+                        label="discord bot token"
+                        type="password"
+                        description="use bot token from discord app > bot tab (not app id or public key)"
+                        value={state.discordBotToken}
+                        onValueChange={(v) => updateBotScoped({ discordBotToken: v })}
+                      />
+                      <Input
+                        label="discord invite url"
+                        value={state.discordInviteUrl}
+                        onValueChange={(v) => updateBotScoped({ discordInviteUrl: v })}
+                      />
+                      <Input
+                        label="channel name"
+                        description="supports text channels and forum channels"
+                        value={state.discordChannelName}
+                        onValueChange={(v) => updateBotScoped({ discordChannelName: v })}
+                      />
+                      <Input
+                        label="channel id (auto-filled after scan)"
+                        value={state.discordChannelId}
+                        onValueChange={(v) => updateBotScoped({ discordChannelId: v })}
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button color="secondary" onPress={syncDiscordApprovals} isLoading={discordSyncing}>
+                        {discordSyncing ? "scanning..." : "scan discord"}
+                      </Button>
+                      <Button color="primary" variant="flat" onPress={generateDiscordReplies} isLoading={discordGenerating}>
+                        {discordGenerating ? "generating..." : "generate replies"}
+                      </Button>
+                    </div>
+                    <Table
+                      removeWrapper
+                      aria-label="discord workflow buckets"
+                      classNames={{ th: "bg-black/20 text-[var(--text-dim)]", td: "text-[var(--text-primary)]/85" }}
+                    >
+                      <TableHeader>
+                        <TableColumn>bucket</TableColumn>
+                        <TableColumn>when it lands here</TableColumn>
+                        <TableColumn>count</TableColumn>
+                      </TableHeader>
+                      <TableBody>
+                        <TableRow key="new">
+                          <TableCell>new posts</TableCell>
+                          <TableCell>we have not replied yet</TableCell>
+                          <TableCell>{newPostsCount}</TableCell>
+                        </TableRow>
+                        <TableRow key="waiting">
+                          <TableCell>waiting</TableCell>
+                          <TableCell>we replied and our reply is last</TableCell>
+                          <TableCell>{waitingCount}</TableCell>
+                        </TableRow>
+                        <TableRow key="followup">
+                          <TableCell>needs follow-up</TableCell>
+                          <TableCell>we replied, then someone replied again</TableCell>
+                          <TableCell>{followUpCount}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                    {discordMsg && <p className="text-xs text-[var(--text-dim)]">{discordMsg}</p>}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant={discordViewTab === "needs_reply" ? "solid" : "flat"}
+                        color="secondary"
+                        onPress={() => setDiscordViewTab("needs_reply")}
+                      >
+                        needs reply
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={discordViewTab === "active" ? "solid" : "flat"}
+                        color="secondary"
+                        onPress={() => setDiscordViewTab("active")}
+                      >
+                        waiting
+                      </Button>
+                    </div>
+                    {discordViewTab === "needs_reply" ? (
+                      state.discordPendingDrafts.length === 0 ? (
+                        <p className="text-sm text-[var(--text-dim)]">
+                          no posts need reply right now. run scan to refresh from #{state.discordChannelName || "i-shipped"}.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {state.discordPendingDrafts.map((draft) => (
+                            <Card key={draft.draftId} className="border border-white/10 bg-black/20" shadow="none">
+                              <CardBody className="gap-2">
+                                <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                  title: {draft.sourceTitle || "untitled thread"}
+                                </p>
+                              <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                author: @{draft.sourceAuthor}
+                              </p>
+                              <div className="max-h-56 space-y-2 overflow-y-auto rounded-xl border border-white/10 bg-black/30 p-3">
+                                {(draft.threadMessages && draft.threadMessages.length > 0
+                                  ? draft.threadMessages.map((msg) => ({
+                                      id: msg.id,
+                                      author: msg.author,
+                                      text: msg.text,
+                                      mine:
+                                        msg.author.toLowerCase() === "mymic" ||
+                                        msg.author.toLowerCase() === (activeBot?.name ?? "").toLowerCase(),
+                                    }))
+                                  : parseDiscordThreadMessages(draft.sourceText, draft.sourceAuthor, [
+                                      "mymic",
+                                      activeBot?.name ?? "",
+                                    ])
+                                ).map((message, idx) => (
+                                  <div
+                                    key={message.id}
+                                    className={`flex ${message.mine ? "justify-end" : "justify-start"}`}
+                                  >
+                                    <div
+                                      className={`max-w-[92%] rounded-2xl px-3 py-2 ${
+                                        message.mine
+                                          ? "bg-[color:color-mix(in_srgb,var(--glow-purple)_24%,transparent)] text-[var(--text-primary)]"
+                                          : "bg-white/8 text-[var(--text-primary)]/90"
+                                      }`}
+                                    >
+                                      <p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                        #{idx + 1} @{message.author}
+                                      </p>
+                                      <p className="whitespace-pre-wrap text-sm">{message.text}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              <Textarea
+                                label="suggested reply"
+                                value={draft.replyText}
+                                  onValueChange={(v) => updateDiscordDraftReply(draft.draftId, v)}
+                                />
+                                <div className="flex flex-wrap gap-2">
+                                  <Button
+                                    color="secondary"
+                                    variant="flat"
+                                    onPress={() => refreshDiscordDraftReply(draft, "pending")}
+                                    isLoading={discordPostingDraftId === draft.draftId}
+                                  >
+                                    refresh reply
+                                  </Button>
+                                  <Button
+                                    color="secondary"
+                                    onPress={() => approveDiscordDraft(draft.draftId)}
+                                    isLoading={discordPostingDraftId === draft.draftId}
+                                  >
+                                    approve and post
+                                  </Button>
+                                </div>
+                              </CardBody>
+                            </Card>
+                          ))}
+                        </div>
+                      )
+                    ) : state.discordActiveThreads.length === 0 ? (
+                      <p className="text-sm text-[var(--text-dim)]">
+                        no waiting threads yet. once our reply is the latest message, threads show here.
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        {state.discordActiveThreads.map((draft) => (
+                          <Card key={draft.draftId} className="border border-white/10 bg-black/20" shadow="none">
+                            <CardBody className="gap-2">
+                              <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                title: {draft.sourceTitle || "untitled thread"}
+                              </p>
+                              <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                author: @{draft.sourceAuthor}
+                              </p>
+                              <div className="max-h-56 space-y-2 overflow-y-auto rounded-xl border border-white/10 bg-black/30 p-3">
+                                {(draft.threadMessages && draft.threadMessages.length > 0
+                                  ? draft.threadMessages.map((msg) => ({
+                                      id: msg.id,
+                                      author: msg.author,
+                                      text: msg.text,
+                                      mine:
+                                        msg.author.toLowerCase() === "mymic" ||
+                                        msg.author.toLowerCase() === (activeBot?.name ?? "").toLowerCase(),
+                                    }))
+                                  : parseDiscordThreadMessages(draft.sourceText, draft.sourceAuthor, [
+                                      "mymic",
+                                      activeBot?.name ?? "",
+                                    ])
+                                ).map((message, idx) => (
+                                  <div
+                                    key={message.id}
+                                    className={`flex ${message.mine ? "justify-end" : "justify-start"}`}
+                                  >
+                                    <div
+                                      className={`max-w-[92%] rounded-2xl px-3 py-2 ${
+                                        message.mine
+                                          ? "bg-[color:color-mix(in_srgb,var(--glow-purple)_24%,transparent)] text-[var(--text-primary)]"
+                                          : "bg-white/8 text-[var(--text-primary)]/90"
+                                      }`}
+                                    >
+                                      <p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-[var(--text-dim)]">
+                                        #{idx + 1} @{message.author}
+                                      </p>
+                                      <p className="whitespace-pre-wrap text-sm">{message.text}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              <Textarea
+                                label="reply in thread"
+                                value={draft.replyText}
+                                onValueChange={(v) => updateActiveDraftReply(draft.draftId, v)}
+                              />
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  color="secondary"
+                                  variant="flat"
+                                  onPress={() => refreshDiscordDraftReply(draft, "active")}
+                                  isLoading={discordPostingDraftId === draft.draftId}
+                                >
+                                  refresh reply
+                                </Button>
+                                <Button
+                                  color="secondary"
+                                  onPress={() => replyToActiveDiscordThread(draft.draftId)}
+                                  isLoading={discordPostingDraftId === draft.draftId}
+                                >
+                                  send reply
+                                </Button>
+                              </div>
+                            </CardBody>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] bg-black/20 p-3 text-xs">
+                      <p className="mb-2 uppercase tracking-[0.12em] text-[var(--text-dim)]">learning stream</p>
+                      {state.discordLearningLog.length === 0 ? (
+                        <p className="text-[var(--text-dim)]">no approved learning yet.</p>
+                      ) : (
+                        state.discordLearningLog.slice(0, 12).map((entry) => (
+                          <div key={`${entry.sourceMessageId}-${entry.at}`} className="mb-2 border-b border-white/10 pb-2 last:border-none">
+                            {entry.notes.map((note, idx) => (
+                              <p key={`${entry.sourceMessageId}-note-${idx}`} className="text-[var(--text-primary)]/85">
+                                - {note}
+                              </p>
+                            ))}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </CardBody>
+                </Card>
+              </div>
+            </Tab>
+          )}
+          <Tab key="product" title="Product">
+            <div className="mt-4 grid gap-6 lg:grid-cols-2">
+              <Card className="cyber-card" shadow="none">
+                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+                  conversation artifacts
+                </CardHeader>
+                <CardBody className="gap-3">
+                  <p className="text-xs text-[var(--text-dim)]">
+                    each discord thread becomes an artifact with product context that keeps updating as replies happen.
                   </p>
-                </div>
-                <Chip color={session ? "success" : "default"} variant="flat">
-                  {session ? "connected" : "not connected"}
-                </Chip>
-              </CardHeader>
-              <CardBody className="gap-3 font-[family-name:var(--font-space-mono)] text-sm">
+                  <Table
+                    removeWrapper
+                    aria-label="conversation artifacts table"
+                    classNames={{ th: "bg-black/20 text-[var(--text-dim)]", td: "text-[var(--text-primary)]/85" }}
+                  >
+                    <TableHeader>
+                      <TableColumn>thread</TableColumn>
+                      <TableColumn>status</TableColumn>
+                      <TableColumn>product</TableColumn>
+                      <TableColumn>audience</TableColumn>
+                    </TableHeader>
+                    <TableBody emptyContent="no artifacts yet. run scan discord in power user tab.">
+                      {state.conversationArtifacts.slice(0, 30).map((artifact) => (
+                        <TableRow
+                          key={artifact.id}
+                          className={`cursor-pointer ${selectedArtifact?.id === artifact.id ? "bg-white/5" : ""}`}
+                          onClick={() => setSelectedArtifactId(artifact.id)}
+                        >
+                          <TableCell>{artifact.sourceTitle || "untitled thread"}</TableCell>
+                          <TableCell>{artifact.status === "active" ? "waiting" : artifact.status}</TableCell>
+                          <TableCell>{artifact.productName || "unknown"}</TableCell>
+                          <TableCell>{artifact.audience || "unknown"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardBody>
+              </Card>
+              <Card className="cyber-card" shadow="none">
+                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+                  selected artifact
+                </CardHeader>
+                <CardBody>
+                  {selectedArtifact ? (
+                    <>
+                      <div className="mb-3 flex flex-wrap gap-2">
+                        <Chip color="secondary" variant="flat">
+                          {selectedArtifact.status === "active" ? "waiting" : selectedArtifact.status}
+                        </Chip>
+                        <Chip color="primary" variant="flat">
+                          @{selectedArtifact.sourceAuthor}
+                        </Chip>
+                      </div>
+                      <Input
+                        label="product name"
+                        value={selectedArtifact.productName}
+                        onValueChange={(v) =>
+                          updateConversationArtifact(selectedArtifact.id, { productName: v })
+                        }
+                      />
+                      <Input
+                        className="mt-3"
+                        label="product type"
+                        value={selectedArtifact.productType}
+                        onValueChange={(v) =>
+                          updateConversationArtifact(selectedArtifact.id, { productType: v })
+                        }
+                      />
+                      <Input
+                        className="mt-3"
+                        label="audience"
+                        value={selectedArtifact.audience}
+                        onValueChange={(v) =>
+                          updateConversationArtifact(selectedArtifact.id, { audience: v })
+                        }
+                      />
+                      <Input
+                        className="mt-3"
+                        label="intent"
+                        value={selectedArtifact.intent}
+                        onValueChange={(v) =>
+                          updateConversationArtifact(selectedArtifact.id, { intent: v })
+                        }
+                      />
+                      <Textarea
+                        className="mt-3"
+                        label="context summary"
+                        value={selectedArtifact.contextSummary}
+                        onValueChange={(v) =>
+                          updateConversationArtifact(selectedArtifact.id, { contextSummary: v })
+                        }
+                      />
+                      <p className="mt-2 text-xs text-[var(--text-dim)]">
+                        last message: {selectedArtifact.lastMessage || "none"}
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--text-dim)]">
+                        context checkpoint: {selectedArtifact.contextCapturedMessageCount} message(s), until{" "}
+                        {selectedArtifact.contextCapturedUntilMessageId || "not captured yet"}
+                      </p>
+                      <p className="mt-3 text-xs text-[var(--text-dim)]">
+                        campaign controls live in the Actions tab.
+                      </p>
+                    </>
+                  ) : (
+                    <p>scan discord first to create artifacts.</p>
+                  )}
+                </CardBody>
+              </Card>
+            </div>
+          </Tab>
+
+          <Tab key="connections" title="Connections">
+            <div className="mt-4 grid gap-6 lg:grid-cols-2">
+              <Card className="cyber-card" shadow="none">
+                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">owner credentials</CardHeader>
+                <CardBody className="gap-3">
+                    <Input
+                      label="openai api key"
+                      type="password"
+                      value={state.openaiApiKey}
+                      onValueChange={(v) => update({ openaiApiKey: v })}
+                      description="used for tone analysis, discord replies, campaign plans, and images"
+                    />
+                  <Input label="owner x oauth2 token (optional)" type="password" value={state.ownerXToken} onValueChange={(v) => update({ ownerXToken: v })} />
+                  <Input label="owner x api key" value={state.ownerXApiKey} onValueChange={(v) => update({ ownerXApiKey: v })} />
+                  <Input label="owner x api secret" type="password" value={state.ownerXApiSecret} onValueChange={(v) => update({ ownerXApiSecret: v })} />
+                  <Input label="owner x access token" value={state.ownerXAccessToken} onValueChange={(v) => update({ ownerXAccessToken: v })} />
+                  <Input label="owner x access token secret" type="password" value={state.ownerXAccessTokenSecret} onValueChange={(v) => update({ ownerXAccessTokenSecret: v })} />
+                  <Button color="secondary" variant="flat" onPress={() => setXHelpOpen(true)}>
+                    help: where to find x api keys
+                  </Button>
+                  <p className={hasOwnerX ? "text-emerald-300 text-sm" : "text-rose-300 text-sm"}>
+                    {hasOwnerX ? "owner x connected" : "owner x not connected"}
+                  </p>
+                </CardBody>
+              </Card>
+              <Card className="cyber-card" shadow="none">
+                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">product credentials</CardHeader>
+                <CardBody className="gap-3">
+                  {!selectedArtifact ? (
+                    <p className="text-sm text-[var(--text-dim)]">
+                      select a conversation product first.
+                    </p>
+                  ) : (
+                    <>
+                      <Input label="product x oauth2 token (optional)" type="password" value={selectedArtifact.xToken} onValueChange={(v) => updateConversationArtifact(selectedArtifact.id, { xToken: v })} />
+                      <Input label="product x api key" value={selectedArtifact.xApiKey} onValueChange={(v) => updateConversationArtifact(selectedArtifact.id, { xApiKey: v })} />
+                      <Input label="product x api secret" type="password" value={selectedArtifact.xApiSecret} onValueChange={(v) => updateConversationArtifact(selectedArtifact.id, { xApiSecret: v })} />
+                      <Input label="product x access token" value={selectedArtifact.xAccessToken} onValueChange={(v) => updateConversationArtifact(selectedArtifact.id, { xAccessToken: v })} />
+                      <Input label="product x access token secret" type="password" value={selectedArtifact.xAccessTokenSecret} onValueChange={(v) => updateConversationArtifact(selectedArtifact.id, { xAccessTokenSecret: v })} />
+                    </>
+                  )}
+                  <p className={hasProductX ? "text-emerald-300 text-sm" : "text-rose-300 text-sm"}>
+                    {hasProductX ? "product x connected" : "product x not connected"}
+                  </p>
+                </CardBody>
+              </Card>
+              <Card className="cyber-card" shadow="none">
+                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">active bot context</CardHeader>
+                <CardBody className="gap-3">
+                  <p className="text-xs text-[var(--text-dim)]">
+                    manage creation + deletion in the power user tab. this section shows which bot
+                    owns these credentials.
+                  </p>
+                  <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                    <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">active bot</p>
+                    {activeBot ? (
+                      <>
+                        <p className="mb-1">
+                          <strong>{activeBot.name}</strong>
+                        </p>
+                        <p className="mb-1 text-[var(--text-dim)]">
+                          {activeBot.productName || "no project name"} | {activeBot.productType || "type not set"}
+                        </p>
+                        <p className="text-[var(--text-dim)]">
+                          audience: {activeBot.audience || "not set"}
+                        </p>
+                      </>
+                    ) : (
+                      <p>no active bot selected. open one from power user.</p>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+            </div>
+          </Tab>
+
+          <Tab key="actions" title="Actions">
+            <div className="mt-4 grid gap-6 lg:grid-cols-2">
+              <Card className="cyber-card" shadow="none">
+                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">run campaign</CardHeader>
+                <CardBody className="gap-3">
+                  <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                    <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">campaign controls</p>
+                    <p className="text-[var(--text-dim)]">
+                      active conversation: {selectedArtifact?.sourceTitle || selectedArtifact?.productName || "none selected"}
+                    </p>
+                    <div className="mt-2 grid gap-2">
+                      <Textarea
+                        size="sm"
+                        label="campaign tone"
+                        value={state.campaignTone}
+                        onValueChange={(v) => updateBotScoped({ campaignTone: v })}
+                      />
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <Input
+                          size="sm"
+                          type="number"
+                          label="total images to generate (0-14)"
+                          value={String(state.campaignImageCount)}
+                          onValueChange={(v) => {
+                            const next = Number(v);
+                            updateBotScoped({
+                              campaignImageCount: Number.isFinite(next)
+                                ? Math.max(0, Math.min(14, next))
+                                : 0,
+                            });
+                          }}
+                        />
+                        <Select
+                          size="sm"
+                          label="image model"
+                          selectedKeys={new Set([state.campaignImageModel])}
+                          onSelectionChange={(keys) => {
+                            const [value] = Array.from(keys);
+                            if (value) updateBotScoped({ campaignImageModel: String(value) });
+                          }}
+                        >
+                          {IMAGE_MODEL_OPTIONS.map((option) => (
+                            <SelectItem key={option.key}>{option.label}</SelectItem>
+                          ))}
+                        </Select>
+                        <Select
+                          size="sm"
+                          label="image size"
+                          selectedKeys={new Set([state.campaignImageSize])}
+                          onSelectionChange={(keys) => {
+                            const [value] = Array.from(keys);
+                            if (value) updateBotScoped({ campaignImageSize: String(value) });
+                          }}
+                        >
+                          {IMAGE_SIZE_OPTIONS.map((option) => (
+                            <SelectItem key={option.key}>{option.label}</SelectItem>
+                          ))}
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        color="secondary"
+                        onPress={generate}
+                        isDisabled={!canGenerate || campaignGenerating}
+                      >
+                        {campaignGenerating ? "generating..." : "generate plan + images"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        color="secondary"
+                        variant="flat"
+                        onPress={refinePlan}
+                        isDisabled={!selectedArtifact?.plan.length || planRefining || !state.openaiApiKey.trim()}
+                      >
+                        {planRefining ? "updating..." : "update plan"}
+                      </Button>
+                    </div>
+                    {!state.openaiApiKey.trim() && (
+                      <p className="mt-2 text-[var(--text-dim)]">
+                        add your openai api key in Connections to generate plans and images.
+                      </p>
+                    )}
+                    {imageSuggestions.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                        <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">
+                          image suggestions
+                        </p>
+                        {imageSuggestions.map((item) => (
+                          <p key={`img-suggest-${item.day}`} className="mb-1 text-[var(--text-dim)]">
+                            day {item.day}: {item.reason} — {cleanPostText(item.post).slice(0, 90)}...
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_18%,transparent)] bg-black/20 p-3 text-xs">
+                    <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">usage estimate</p>
+                    <p className="text-[var(--text-dim)]">
+                      estimate for next plan + images run.
+                    </p>
+                    <p className="text-[var(--text-dim)]">
+                      tokens est: {estimatedInputTokens} in / {estimatedOutputTokens} out · images: {imageCount}
+                    </p>
+                    <p className="text-[var(--text-dim)]">
+                      est cost: $
+                      {estimatedTotalCost.toFixed(4)} (input ${estimatedInputCost.toFixed(4)} + output $
+                      {estimatedOutputCost.toFixed(4)} + images ${estimatedImageCost.toFixed(4)})
+                    </p>
+                    <p className="text-[var(--text-dim)]">
+                      pricing based on gpt-4.1-mini and gpt-image-1 (medium, {state.campaignImageSize}).
+                    </p>
+                  </div>
+                  <Table
+                    removeWrapper
+                    aria-label="product action status"
+                    classNames={{ th: "bg-black/20 text-[var(--text-dim)]", td: "text-[var(--text-primary)]/85" }}
+                  >
+                    <TableHeader>
+                      <TableColumn>conversation</TableColumn>
+                      <TableColumn>mode</TableColumn>
+                      <TableColumn>x</TableColumn>
+                      <TableColumn>plan</TableColumn>
+                    </TableHeader>
+                    <TableBody emptyContent="no products yet. create one in power user.">
+                      {state.conversationArtifacts.map((artifact) => {
+                        const productXReady = hasXConnection({
+                          xToken: artifact.xToken,
+                          xApiKey: artifact.xApiKey,
+                          xApiSecret: artifact.xApiSecret,
+                          xAccessToken: artifact.xAccessToken,
+                          xAccessTokenSecret: artifact.xAccessTokenSecret,
+                        });
+                        return (
+                          <TableRow
+                            key={`action-artifact-${artifact.id}`}
+                            className={`cursor-pointer ${selectedArtifact?.id === artifact.id ? "bg-white/5" : ""}`}
+                            onClick={() => setSelectedArtifactId(artifact.id)}
+                          >
+                            <TableCell>{artifact.sourceTitle || artifact.productName || "untitled"}</TableCell>
+                            <TableCell>{artifact.actionCredentialMode || "owner"}</TableCell>
+                            <TableCell>{productXReady ? "ready" : "missing"}</TableCell>
+                            <TableCell>
+                              day {artifact.day ?? 1} | posted {(artifact.posted ?? []).length}/14
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                  <Switch isSelected={state.autoPost} onValueChange={(v) => update({ autoPost: v })}>auto-post planning</Switch>
+                  <Switch isSelected={state.autoComment} onValueChange={(v) => update({ autoComment: v })}>auto-comment ideas</Switch>
+                  <Switch isSelected={state.autoMetrics} onValueChange={(v) => update({ autoMetrics: v })}>auto-metrics</Switch>
+                  <Switch isSelected={showFullPosts} onValueChange={setShowFullPosts}>show full posts</Switch>
+                  <div className="flex gap-2">
+                    <Button color="secondary" variant="flat" onPress={() => today && navigator.clipboard.writeText(todayCleanPost)} isDisabled={!today}>copy draft</Button>
+                    <Button color="secondary" variant="bordered" onPress={() => today && window.open(toComposeUrl(todayCleanPost), "_blank", "noopener,noreferrer")} isDisabled={!today}>open x composer</Button>
+                    <Button color="secondary" variant="ghost" onPress={markPosted} isDisabled={!today}>mark posted</Button>
+                  </div>
+                  <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                    <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">credential mode</p>
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        color="secondary"
+                        variant={activeCredentialMode === "owner" ? "solid" : "flat"}
+                        onPress={() =>
+                          selectedArtifact &&
+                          updateConversationArtifact(selectedArtifact.id, { actionCredentialMode: "owner" })
+                        }
+                        isDisabled={!selectedArtifact}
+                      >
+                        owner mode
+                      </Button>
+                      <Button
+                        size="sm"
+                        color="secondary"
+                        variant={activeCredentialMode === "product" ? "solid" : "flat"}
+                        onPress={() =>
+                          selectedArtifact &&
+                          updateConversationArtifact(selectedArtifact.id, { actionCredentialMode: "product" })
+                        }
+                        isDisabled={!selectedArtifact}
+                      >
+                        product mode
+                      </Button>
+                    </div>
+                    <p className={hasActionX ? "text-emerald-300" : "text-rose-300"}>
+                      {activeCredentialMode === "owner"
+                        ? hasActionX
+                          ? "owner credentials active"
+                          : "owner credentials missing"
+                        : hasActionX
+                          ? "product credentials active"
+                          : "product credentials missing"}
+                    </p>
+                  </div>
+                  <Button color="secondary" onPress={publish} isDisabled={!hasActionX || !today || publishing}>
+                    {publishing ? "publishing..." : "publish today on x"}
+                  </Button>
+                  <Button color="secondary" onPress={runDay} isDisabled={!selectedArtifact?.plan.length}>run autopilot day</Button>
+                  <Button color="secondary" onPress={executeTodayAutomation} isDisabled={!selectedArtifact?.plan.length || !hasActionX || publishing || engaging || automationRunning}>
+                    {automationRunning ? "running automation..." : "execute today (post + comments + metrics)"}
+                  </Button>
+                  <Button color="secondary" variant="flat" onPress={discoverRelevantPosts} isDisabled={!hasActionX || !searchQuery || discovering}>
+                    {discovering ? "discovering..." : "find relevant x posts"}
+                  </Button>
+                  <Button color="secondary" variant="flat" onPress={autoCommentTopPosts} isDisabled={!hasActionX || !searchQuery || engaging}>
+                    {engaging ? "commenting..." : "auto-comment top posts"}
+                  </Button>
+                  {discoverMsg && <p className="text-xs text-[var(--text-dim)]">{discoverMsg}</p>}
+                  {engageMsg && <p className="text-xs text-[var(--text-dim)]">{engageMsg}</p>}
+                  <Button color="secondary" variant="flat" onPress={refreshRealMetrics} isDisabled={!hasActionX || metricsLoading}>
+                    {metricsLoading ? "syncing metrics..." : "refresh real metrics"}
+                  </Button>
+                  {metricsMsg && <p className="text-xs text-[var(--text-dim)]">{metricsMsg}</p>}
+                  {automationMsg && <p className="text-xs text-[var(--text-dim)]">{automationMsg}</p>}
+                  {scheduledDays.length > 0 && (
+                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">scheduled next</p>
+                      {scheduledDays.map((item) => (
+                        <p key={`scheduled-${item.day}`} className="mb-1">
+                          day {item.day}: {showFullPosts ? cleanPostText(item.post) : `${cleanPostText(item.post).slice(0, 90)}...`}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  {today?.images?.length ? (
+                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">today images</p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {today.images.map((url, idx) => (
+                          <Image
+                            key={`today-img-${idx}`}
+                            src={url}
+                            alt={`day ${today.day} image ${idx + 1}`}
+                            className="h-32 w-full rounded-md object-cover"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {automationLog.length > 0 && (
+                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">automation run log</p>
+                      {automationLog.slice(-6).map((line, idx) => (
+                        <p key={`auto-log-${idx}`} className="mb-1">{line}</p>
+                      ))}
+                    </div>
+                  )}
+                  {discoveredPosts.length > 0 && (
+                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">top relevant posts</p>
+                      {discoveredPosts.slice(0, 3).map((post) => (
+                        <p key={post.id} className="mb-2">
+                          @{post.authorUsername}: {post.text.slice(0, 120)}...
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  {results.map((r) => (
+                    <p key={`${r.platform}-${r.message}`} className={r.ok ? "text-emerald-300 text-sm" : "text-rose-300 text-sm"}>
+                      {r.platform}: {r.message}
+                    </p>
+                  ))}
+                </CardBody>
+              </Card>
+              <Card className="cyber-card" shadow="none">
+                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">progress</CardHeader>
+                <CardBody className="gap-3">
+                  <p>plan: $10 / 14 days</p>
+                  <p>mode: build traction first, then package bots for sale</p>
+                  <p className="text-xs text-[var(--text-dim)]">
+                    campaign id: {state.campaignId || "none"}
+                  </p>
+                  <p className={hasActionX ? "text-emerald-300" : "text-[var(--text-dim)]"}>
+                    {hasActionX
+                      ? `${activeCredentialMode} x connected`
+                      : `${activeCredentialMode} x not connected`}
+                  </p>
+                  <Progress value={progress} color="secondary" />
+                  <p>
+                    views: {selectedArtifact?.views ?? 0} | replies: {selectedArtifact?.replies ?? 0} | followers:{" "}
+                    {selectedArtifact?.followers ?? 0}
+                  </p>
+                  <p>posted days: {postedCount}/14</p>
+                  <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="uppercase tracking-[0.18em] text-[var(--text-dim)]">current campaign posts</p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          color="secondary"
+                          variant={campaignView === "overview" ? "solid" : "flat"}
+                          onPress={() => setCampaignView("overview")}
+                        >
+                          overview
+                        </Button>
+                        <Button
+                          size="sm"
+                          color="secondary"
+                          variant={campaignView === "day" ? "solid" : "flat"}
+                          onPress={() => setCampaignView("day")}
+                        >
+                          day by day
+                        </Button>
+                      </div>
+                    </div>
+                    {actionPlan.length === 0 ? (
+                      <p>no campaign generated yet.</p>
+                    ) : campaignView === "overview" ? (
+                      actionPlan.map((item) => (
+                        <p
+                          key={`day-${item.day}`}
+                          className={(selectedArtifact?.posted ?? []).includes(item.day) ? "text-emerald-300 mb-1" : "mb-1"}
+                        >
+                          day {item.day}: {showFullPosts ? cleanPostText(item.post) : `${cleanPostText(item.post).slice(0, 100)}...`}
+                        </p>
+                      ))
+                    ) : (
+                      <div className="space-y-3">
+                        <Pagination
+                          size="sm"
+                          total={actionPlan.length}
+                          page={campaignDayFocus}
+                          onChange={(page) => setCampaignDayFocus(page)}
+                        />
+                        {dayViewItem ? (
+                          <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm">
+                            <div className="flex gap-3">
+                              <Avatar
+                                size="sm"
+                                name={displayName}
+                                classNames={{ base: "bg-white/10", name: "text-xs" }}
+                              />
+                              <div className="flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="font-semibold">{displayName}</p>
+                                  <p className="text-xs text-[var(--text-dim)]">@{handle} · day {dayViewItem.day}</p>
+                                </div>
+                                <p className="mt-2 whitespace-pre-wrap text-[var(--text-primary)]/90">
+                                  {cleanPostText(dayViewItem.post)}
+                                </p>
+                                <Textarea
+                                  className="mt-3"
+                                  label="image prompt (optional)"
+                                  placeholder="describe the specific visual you want for this post"
+                                  value={dayViewItem.imagePromptOverride ?? ""}
+                                  onValueChange={(value) => updateDayImagePrompt(dayViewItem.day, value)}
+                                />
+                                {(dayViewItem.images?.length ?? 0) > 0 && (
+                                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                    {dayViewItem.images?.map((url, idx) => (
+                                      <Image
+                                        key={`day-img-${dayViewItem.day}-${idx}`}
+                                        src={url}
+                                        alt={`day ${dayViewItem.day} image ${idx + 1}`}
+                                        className="h-40 w-full rounded-md object-cover"
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <Button
+                                    size="sm"
+                                    color="secondary"
+                                    variant="flat"
+                                    onPress={() => generateImageForDay(dayViewItem.day)}
+                                    isDisabled={imageGenerating}
+                                  >
+                                    {imageGenerating ? "generating image..." : "generate image for this day"}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    color={dayViewIsPosted ? "default" : "secondary"}
+                                    variant={dayViewIsPosted ? "flat" : "solid"}
+                                    onPress={() => publishDay(dayViewItem.day)}
+                                    isDisabled={!hasActionX || publishing || dayViewIsPosted}
+                                  >
+                                    {dayViewIsPosted
+                                      ? "published"
+                                      : publishing
+                                        ? "publishing..."
+                                        : "publish this day"}
+                                  </Button>
+                                </div>
+                                <Divider className="my-3 bg-white/10" />
+                                <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--text-dim)]">
+                                  <span>replies {selectedArtifact?.replies ?? 0}</span>
+                                  <span>views {selectedArtifact?.views ?? 0}</span>
+                                  <span>followers {selectedArtifact?.followers ?? 0}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <p>no day selected yet.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {(selectedArtifact?.campaignArchive?.length ?? 0) > 0 && (
+                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_18%,transparent)] bg-black/20 p-3 text-xs">
+                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">previous campaigns</p>
+                      {(selectedArtifact?.campaignArchive ?? []).slice(0, 4).map((c) => (
+                        <p key={c.id} className="mb-1">
+                          {new Date(c.createdAt).toLocaleDateString()} | {c.productName || "campaign"} | posted {c.posted.length}/14
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </CardBody>
+              </Card>
+            </div>
+          </Tab>
+        </Tabs>
+      </div>
+      </div>
+      <Modal isOpen={accountOpen} onOpenChange={setAccountOpen} backdrop="blur" placement="center">
+        <ModalContent className="cyber-card">
+          {() => (
+            <>
+              <ModalHeader className="font-[family-name:var(--font-orbitron)] uppercase">
+                account
+              </ModalHeader>
+              <ModalBody className="gap-3 font-[family-name:var(--font-space-mono)] text-sm">
                 {!session ? (
                   <>
                     <div className="flex gap-2">
@@ -1418,12 +3848,10 @@ export default function Home() {
                   </>
                 ) : (
                   <>
-                    <div className="grid gap-3 sm:grid-cols-1">
-                      <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] bg-black/20 p-3">
-                        <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">account</p>
-                        <p className="mt-1 break-all text-[var(--text-primary)]">{session.user.email}</p>
-                        <p className="mt-1 text-xs text-[var(--text-dim)]">bots saved: {state.bots.length}</p>
-                      </div>
+                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] bg-black/20 p-3">
+                      <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">account</p>
+                      <p className="mt-1 break-all text-[var(--text-primary)]">{session.user.email}</p>
+                      <p className="mt-1 text-xs text-[var(--text-dim)]">bots saved: {state.bots.length}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="bordered" color="secondary" onPress={signOut}>
@@ -1433,447 +3861,12 @@ export default function Home() {
                   </>
                 )}
                 {authMsg && <p className="text-xs text-[var(--text-dim)]">{authMsg}</p>}
-              </CardBody>
-            </Card>
-          </Tab>
-          {isMasterUser && (
-            <Tab key="power" title="Power User">
-              <div className="mt-4 grid gap-6 lg:grid-cols-2">
-                <Card className="cyber-card" shadow="none">
-                  <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
-                    bot controls
-                  </CardHeader>
-                  <CardBody className="gap-3 text-sm">
-                  <Input
-                    label="bot name"
-                    value={botNameInput}
-                    onValueChange={setBotNameInput}
-                    isDisabled={!session || !isMasterUser}
-                  />
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Button
-                      color="secondary"
-                      onPress={() => saveBotConfig(true)}
-                      isDisabled={!session || !isMasterUser}
-                    >
-                      create new bot
-                    </Button>
-                    <Button
-                      color="secondary"
-                      variant="flat"
-                      onPress={() => saveBotConfig(false)}
-                      isDisabled={!session || !isMasterUser || !state.activeBotId}
-                    >
-                      save changes
-                    </Button>
-                    <Button
-                      color="secondary"
-                      variant="bordered"
-                      onPress={clearWorkspaceForNewBot}
-                      isDisabled={!session || !isMasterUser}
-                    >
-                      clear workspace
-                    </Button>
-                    <Button
-                      color="secondary"
-                      variant="ghost"
-                      isDisabled={!session || !state.activeBotId}
-                      onPress={() => state.activeBotId && loadBotConfig(state.activeBotId)}
-                    >
-                      reload active bot
-                    </Button>
-                  </div>
-                  </CardBody>
-                </Card>
-                <Card className="cyber-card" shadow="none">
-                  <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
-                    project bots
-                  </CardHeader>
-                  <CardBody className="gap-3 text-sm">
-                    {state.bots.length === 0 ? (
-                      <p>no bots yet. create your first project bot.</p>
-                    ) : (
-                      state.bots.map((bot) => (
-                        <div key={bot.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
-                          <p>
-                            <strong>{bot.name}</strong> {bot.id === state.activeBotId ? "(active)" : ""}
-                          </p>
-                          <p className="text-xs text-[var(--text-dim)]">
-                            {bot.productName || "no project name"} | {bot.productType || "type not set"}
-                          </p>
-                          <p className="text-xs text-[var(--text-dim)]">
-                            audience: {bot.audience || "not set"}
-                          </p>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <Button size="sm" color="secondary" variant="flat" onPress={() => loadBotConfig(bot.id)}>
-                              open
-                            </Button>
-                            <Button
-                              size="sm"
-                              color="danger"
-                              variant="light"
-                              onPress={() => removeBotConfig(bot.id)}
-                              isDisabled={!isMasterUser}
-                            >
-                              delete
-                            </Button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </CardBody>
-                </Card>
-                <Card className="cyber-card lg:col-span-2" shadow="none">
-                  <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
-                    discord approvals
-                  </CardHeader>
-                  <CardBody className="gap-3">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <Input
-                        label="discord bot token"
-                        type="password"
-                        description="use bot token from discord app > bot tab (not app id or public key)"
-                        value={state.discordBotToken}
-                        onValueChange={(v) => update({ discordBotToken: v })}
-                      />
-                      <Input
-                        label="discord invite url"
-                        value={state.discordInviteUrl}
-                        onValueChange={(v) => update({ discordInviteUrl: v })}
-                      />
-                      <Input
-                        label="channel name"
-                        description="supports text channels and forum channels"
-                        value={state.discordChannelName}
-                        onValueChange={(v) => update({ discordChannelName: v })}
-                      />
-                      <Input
-                        label="channel id (auto-filled after scan)"
-                        value={state.discordChannelId}
-                        onValueChange={(v) => update({ discordChannelId: v })}
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button color="secondary" onPress={syncDiscordApprovals} isLoading={discordSyncing}>
-                        {discordSyncing ? "scanning..." : "scan discord"}
-                      </Button>
-                      <Button color="primary" variant="flat" onPress={generateDiscordReplies} isLoading={discordGenerating}>
-                        {discordGenerating ? "generating..." : "generate replies"}
-                      </Button>
-                      <Chip variant="flat" color="secondary">
-                        needs reply: {state.discordPendingDrafts.length}
-                      </Chip>
-                      <Chip variant="flat" color="primary">
-                        active: {state.discordActiveThreads.length}
-                      </Chip>
-                    </div>
-                    {discordMsg && <p className="text-xs text-[var(--text-dim)]">{discordMsg}</p>}
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        variant={discordViewTab === "needs_reply" ? "solid" : "flat"}
-                        color="secondary"
-                        onPress={() => setDiscordViewTab("needs_reply")}
-                      >
-                        needs reply
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={discordViewTab === "active" ? "solid" : "flat"}
-                        color="secondary"
-                        onPress={() => setDiscordViewTab("active")}
-                      >
-                        active conversations
-                      </Button>
-                    </div>
-                    {discordViewTab === "needs_reply" ? (
-                      state.discordPendingDrafts.length === 0 ? (
-                        <p className="text-sm text-[var(--text-dim)]">
-                          no posts need reply right now. run scan to refresh from #{state.discordChannelName || "i-shipped"}.
-                        </p>
-                      ) : (
-                        <div className="space-y-3">
-                          {state.discordPendingDrafts.map((draft) => (
-                            <Card key={draft.draftId} className="border border-white/10 bg-black/20" shadow="none">
-                              <CardBody className="gap-2">
-                                <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
-                                  title: {draft.sourceTitle || "untitled thread"}
-                                </p>
-                                <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
-                                  author: @{draft.sourceAuthor}
-                                </p>
-                                <p className="text-sm text-[var(--text-primary)]/85">{draft.sourceText}</p>
-                                <Textarea
-                                  label="suggested reply"
-                                  value={draft.replyText}
-                                  onValueChange={(v) => updateDiscordDraftReply(draft.draftId, v)}
-                                />
-                                <div className="flex flex-wrap gap-2">
-                                  <Button
-                                    color="secondary"
-                                    onPress={() => approveDiscordDraft(draft.draftId)}
-                                    isLoading={discordPostingDraftId === draft.draftId}
-                                  >
-                                    approve and post
-                                  </Button>
-                                </div>
-                              </CardBody>
-                            </Card>
-                          ))}
-                        </div>
-                      )
-                    ) : state.discordActiveThreads.length === 0 ? (
-                      <p className="text-sm text-[var(--text-dim)]">
-                        no active conversations yet. approve a reply and it will appear here.
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {state.discordActiveThreads.map((draft) => (
-                          <Card key={draft.draftId} className="border border-white/10 bg-black/20" shadow="none">
-                            <CardBody className="gap-2">
-                              <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
-                                title: {draft.sourceTitle || "untitled thread"}
-                              </p>
-                              <p className="text-xs uppercase tracking-[0.12em] text-[var(--text-dim)]">
-                                author: @{draft.sourceAuthor}
-                              </p>
-                              <p className="text-sm text-[var(--text-primary)]/85">{draft.sourceText}</p>
-                              <Textarea
-                                label="reply in thread"
-                                value={draft.replyText}
-                                onValueChange={(v) => updateActiveDraftReply(draft.draftId, v)}
-                              />
-                              <div className="flex flex-wrap gap-2">
-                                <Button
-                                  color="secondary"
-                                  onPress={() => replyToActiveDiscordThread(draft.draftId)}
-                                  isLoading={discordPostingDraftId === draft.draftId}
-                                >
-                                  send reply
-                                </Button>
-                              </div>
-                            </CardBody>
-                          </Card>
-                        ))}
-                      </div>
-                    )}
-                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] bg-black/20 p-3 text-xs">
-                      <p className="mb-2 uppercase tracking-[0.12em] text-[var(--text-dim)]">learning stream</p>
-                      {state.discordLearningLog.length === 0 ? (
-                        <p className="text-[var(--text-dim)]">no approved learning yet.</p>
-                      ) : (
-                        state.discordLearningLog.slice(0, 12).map((entry) => (
-                          <div key={`${entry.sourceMessageId}-${entry.at}`} className="mb-2 border-b border-white/10 pb-2 last:border-none">
-                            {entry.notes.map((note, idx) => (
-                              <p key={`${entry.sourceMessageId}-note-${idx}`} className="text-[var(--text-primary)]/85">
-                                - {note}
-                              </p>
-                            ))}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </CardBody>
-                </Card>
-              </div>
-            </Tab>
+              </ModalBody>
+            </>
           )}
-          <Tab key="product" title="Product">
-            <div className="mt-4 grid gap-6 lg:grid-cols-2">
-              <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
-                  product + tone
-                </CardHeader>
-                <CardBody className="gap-3">
-                  <Input label="product name" value={state.productName} onValueChange={(v) => update({ productName: v })} />
-                  <Input label="product type" value={state.productType} onValueChange={(v) => update({ productType: v })} />
-                  <Textarea label="audience" value={state.audience} onValueChange={(v) => update({ audience: v })} />
-                  <Input label="goal in 14 days" value={state.goal} onValueChange={(v) => update({ goal: v })} />
-                  <Input label="youtube url (tone source)" value={state.youtubeUrl} onValueChange={(v) => update({ youtubeUrl: v })} />
-                  <Input label="openai api key (tone)" type="password" value={state.openaiApiKey} onValueChange={(v) => update({ openaiApiKey: v })} />
-                  <Button color="secondary" variant="flat" onPress={analyzeTone} isDisabled={!state.youtubeUrl}>
-                    {toneLoading ? "analyzing..." : "analyze tone"}
-                  </Button>
-                  <p className="text-xs text-[var(--text-dim)]">{toneMsg || `tone: ${state.toneProfile}`}</p>
-                  <Button color="secondary" onPress={generate} isDisabled={!canGenerate}>generate 14-day plan</Button>
-                </CardBody>
-              </Card>
-              <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
-                  today output
-                </CardHeader>
-                <CardBody>
-                  {today ? (
-                    <>
-                      <Chip color="secondary" variant="flat">day {today.day}</Chip>
-                      <p className="mt-2 text-sm">{todayCleanPost}</p>
-                      <p className="mt-2 text-sm text-[var(--text-dim)]">engagement: {today.play}</p>
-                    </>
-                  ) : (
-                    <p>generate a plan first.</p>
-                  )}
-                </CardBody>
-              </Card>
-            </div>
-          </Tab>
+        </ModalContent>
+      </Modal>
 
-          <Tab key="connections" title="Connections">
-            <div className="mt-4 grid gap-6 lg:grid-cols-2">
-              <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">x credentials</CardHeader>
-                <CardBody className="gap-3">
-                  <Input label="x oauth2 token (optional)" type="password" value={state.xToken} onValueChange={(v) => update({ xToken: v })} />
-                  <Input label="x api key" value={state.xApiKey} onValueChange={(v) => update({ xApiKey: v })} />
-                  <Input label="x api secret" type="password" value={state.xApiSecret} onValueChange={(v) => update({ xApiSecret: v })} />
-                  <Input label="x access token" value={state.xAccessToken} onValueChange={(v) => update({ xAccessToken: v })} />
-                  <Input label="x access token secret" type="password" value={state.xAccessTokenSecret} onValueChange={(v) => update({ xAccessTokenSecret: v })} />
-                  <Button color="secondary" variant="flat" onPress={() => setXHelpOpen(true)}>
-                    help: where to find x api keys
-                  </Button>
-                  <p className={hasX ? "text-emerald-300 text-sm" : "text-rose-300 text-sm"}>{hasX ? "x connected" : "x not connected"}</p>
-                </CardBody>
-              </Card>
-              <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">active bot context</CardHeader>
-                <CardBody className="gap-3">
-                  <p className="text-xs text-[var(--text-dim)]">
-                    manage creation + deletion in the power user tab. this section shows which bot
-                    owns these credentials.
-                  </p>
-                  <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
-                    <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">active bot</p>
-                    {activeBot ? (
-                      <>
-                        <p className="mb-1">
-                          <strong>{activeBot.name}</strong>
-                        </p>
-                        <p className="mb-1 text-[var(--text-dim)]">
-                          {activeBot.productName || "no project name"} | {activeBot.productType || "type not set"}
-                        </p>
-                        <p className="text-[var(--text-dim)]">
-                          audience: {activeBot.audience || "not set"}
-                        </p>
-                      </>
-                    ) : (
-                      <p>no active bot selected. open one from power user.</p>
-                    )}
-                  </div>
-                </CardBody>
-              </Card>
-            </div>
-          </Tab>
-
-          <Tab key="actions" title="Actions">
-            <div className="mt-4 grid gap-6 lg:grid-cols-2">
-              <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">run campaign</CardHeader>
-                <CardBody className="gap-3">
-                  <Switch isSelected={state.autoPost} onValueChange={(v) => update({ autoPost: v })}>auto-post planning</Switch>
-                  <Switch isSelected={state.autoComment} onValueChange={(v) => update({ autoComment: v })}>auto-comment ideas</Switch>
-                  <Switch isSelected={state.autoMetrics} onValueChange={(v) => update({ autoMetrics: v })}>auto-metrics</Switch>
-                  <div className="flex gap-2">
-                    <Button color="secondary" variant="flat" onPress={() => today && navigator.clipboard.writeText(todayCleanPost)} isDisabled={!today}>copy draft</Button>
-                    <Button color="secondary" variant="bordered" onPress={() => today && window.open(toComposeUrl(todayCleanPost), "_blank", "noopener,noreferrer")} isDisabled={!today}>open x composer</Button>
-                    <Button color="secondary" variant="ghost" onPress={markPosted} isDisabled={!today}>mark posted</Button>
-                  </div>
-                  <Button color="secondary" onPress={publish} isDisabled={!hasX || !today || publishing}>
-                    {publishing ? "publishing..." : "publish today on x"}
-                  </Button>
-                  <Button color="secondary" onPress={runDay} isDisabled={!state.plan.length}>run autopilot day</Button>
-                  <Button color="secondary" onPress={executeTodayAutomation} isDisabled={!state.plan.length || !hasX || publishing || engaging || automationRunning}>
-                    {automationRunning ? "running automation..." : "execute today (post + comments + metrics)"}
-                  </Button>
-                  <Button color="secondary" variant="flat" onPress={discoverRelevantPosts} isDisabled={!hasX || !searchQuery || discovering}>
-                    {discovering ? "discovering..." : "find relevant x posts"}
-                  </Button>
-                  <Button color="secondary" variant="flat" onPress={autoCommentTopPosts} isDisabled={!hasX || !searchQuery || engaging}>
-                    {engaging ? "commenting..." : "auto-comment top posts"}
-                  </Button>
-                  {discoverMsg && <p className="text-xs text-[var(--text-dim)]">{discoverMsg}</p>}
-                  {engageMsg && <p className="text-xs text-[var(--text-dim)]">{engageMsg}</p>}
-                  <Button color="secondary" variant="flat" onPress={refreshRealMetrics} isDisabled={!hasX || metricsLoading}>
-                    {metricsLoading ? "syncing metrics..." : "refresh real metrics"}
-                  </Button>
-                  {metricsMsg && <p className="text-xs text-[var(--text-dim)]">{metricsMsg}</p>}
-                  {automationMsg && <p className="text-xs text-[var(--text-dim)]">{automationMsg}</p>}
-                  {scheduledDays.length > 0 && (
-                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
-                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">scheduled next</p>
-                      {scheduledDays.map((item) => (
-                        <p key={`scheduled-${item.day}`} className="mb-1">
-                          day {item.day}: {cleanPostText(item.post).slice(0, 90)}...
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                  {automationLog.length > 0 && (
-                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
-                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">automation run log</p>
-                      {automationLog.slice(-6).map((line, idx) => (
-                        <p key={`auto-log-${idx}`} className="mb-1">{line}</p>
-                      ))}
-                    </div>
-                  )}
-                  {discoveredPosts.length > 0 && (
-                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
-                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">top relevant posts</p>
-                      {discoveredPosts.slice(0, 3).map((post) => (
-                        <p key={post.id} className="mb-2">
-                          @{post.authorUsername}: {post.text.slice(0, 120)}...
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                  {results.map((r) => (
-                    <p key={`${r.platform}-${r.message}`} className={r.ok ? "text-emerald-300 text-sm" : "text-rose-300 text-sm"}>
-                      {r.platform}: {r.message}
-                    </p>
-                  ))}
-                </CardBody>
-              </Card>
-              <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">progress</CardHeader>
-                <CardBody className="gap-3">
-                  <p>plan: $10 / 14 days</p>
-                  <p>mode: build traction first, then package bots for sale</p>
-                  <p className="text-xs text-[var(--text-dim)]">
-                    campaign id: {state.campaignId || "none"}
-                  </p>
-                  <p className={hasX ? "text-emerald-300" : "text-[var(--text-dim)]"}>
-                    {hasX ? "x connected" : "x not connected"}
-                  </p>
-                  <Progress value={progress} color="secondary" />
-                  <p>views: {state.views} | replies: {state.replies} | followers: {state.followers}</p>
-                  <p>posted days: {postedCount}/14</p>
-                  <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
-                    <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">current campaign posts</p>
-                    {state.plan.length === 0 ? (
-                      <p>no campaign generated yet.</p>
-                    ) : (
-                      state.plan.map((item) => (
-                        <p key={`day-${item.day}`} className={state.posted.includes(item.day) ? "text-emerald-300 mb-1" : "mb-1"}>
-                          day {item.day}: {cleanPostText(item.post).slice(0, 100)}...
-                        </p>
-                      ))
-                    )}
-                  </div>
-                  {state.campaignArchive.length > 0 && (
-                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_18%,transparent)] bg-black/20 p-3 text-xs">
-                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">previous campaigns</p>
-                      {state.campaignArchive.slice(0, 4).map((c) => (
-                        <p key={c.id} className="mb-1">
-                          {new Date(c.createdAt).toLocaleDateString()} | {c.productName || "campaign"} | posted {c.posted.length}/14
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                </CardBody>
-              </Card>
-            </div>
-          </Tab>
-        </Tabs>
-      </div>
-      </div>
       <Modal isOpen={xHelpOpen} onOpenChange={setXHelpOpen} backdrop="blur" placement="center">
         <ModalContent className="cyber-card">
           {(onClose) => (
