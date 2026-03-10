@@ -5,6 +5,22 @@ import { publishToX } from "../../../../lib/social/x-publish";
 export const runtime = "nodejs";
 
 type Day = { day: number; post: string; images?: string[] };
+type ConversationArtifact = {
+  id: string;
+  sourceTitle?: string;
+  actionCredentialMode?: "owner" | "product";
+  xToken?: string;
+  xApiKey?: string;
+  xApiSecret?: string;
+  xAccessToken?: string;
+  xAccessTokenSecret?: string;
+  plan?: Day[];
+  day?: number;
+  posted?: number[];
+  postedTweetIds?: string[];
+  campaignId?: string;
+  updatedAt?: string;
+};
 type BotProfile = {
   id: string;
   name: string;
@@ -19,6 +35,7 @@ type BotProfile = {
   posted?: number[];
   postedTweetIds?: string[];
   campaignId?: string;
+  conversationArtifacts?: ConversationArtifact[];
 };
 type AppState = {
   autoPost?: boolean;
@@ -40,6 +57,25 @@ function pickNextUnpostedDay(plan: Day[], posted: number[]): Day | null {
     if (!posted.includes(item.day)) return item;
   }
   return null;
+}
+
+function pickActiveArtifact(artifacts: ConversationArtifact[]): {
+  artifact: ConversationArtifact | null;
+  nextItem: Day | null;
+} {
+  const sorted = [...artifacts].sort((a, b) => {
+    const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    return bTime - aTime;
+  });
+  for (const artifact of sorted) {
+    const plan = Array.isArray(artifact.plan) ? artifact.plan : [];
+    if (!plan.length) continue;
+    const posted = Array.isArray(artifact.posted) ? artifact.posted : [];
+    const nextItem = pickNextUnpostedDay(plan, posted);
+    if (nextItem) return { artifact, nextItem };
+  }
+  return { artifact: null, nextItem: null };
 }
 
 function hasXAuth(auth: {
@@ -107,17 +143,20 @@ async function handler(req: NextRequest) {
     for (let idx = 0; idx < bots.length; idx += 1) {
       const bot = bots[idx];
       summary.botsScanned += 1;
-      const plan = Array.isArray(bot.plan) ? bot.plan : [];
-      if (!plan.length) continue;
+      const artifacts = Array.isArray(bot.conversationArtifacts)
+        ? bot.conversationArtifacts
+        : [];
+      if (!artifacts.length) continue;
 
-      const posted = Array.isArray(bot.posted) ? bot.posted : [];
-      const nextItem = pickNextUnpostedDay(plan, posted);
-      if (!nextItem) continue;
+      const { artifact, nextItem } = pickActiveArtifact(artifacts);
+      if (!artifact || !nextItem) continue;
 
+      const plan = Array.isArray(artifact.plan) ? artifact.plan : [];
+      const posted = Array.isArray(artifact.posted) ? artifact.posted : [];
       const postText = cleanPostText(nextItem.post || "");
       if (!postText) continue;
 
-      const mode = bot.actionCredentialMode ?? "owner";
+      const mode = artifact.actionCredentialMode ?? bot.actionCredentialMode ?? "owner";
       const auth =
         mode === "owner"
           ? {
@@ -128,11 +167,11 @@ async function handler(req: NextRequest) {
               xAccessTokenSecret: state.ownerXAccessTokenSecret ?? "",
             }
           : {
-              xToken: bot.xToken ?? "",
-              xApiKey: bot.xApiKey ?? "",
-              xApiSecret: bot.xApiSecret ?? "",
-              xAccessToken: bot.xAccessToken ?? "",
-              xAccessTokenSecret: bot.xAccessTokenSecret ?? "",
+              xToken: artifact.xToken ?? bot.xToken ?? "",
+              xApiKey: artifact.xApiKey ?? bot.xApiKey ?? "",
+              xApiSecret: artifact.xApiSecret ?? bot.xApiSecret ?? "",
+              xAccessToken: artifact.xAccessToken ?? bot.xAccessToken ?? "",
+              xAccessTokenSecret: artifact.xAccessTokenSecret ?? bot.xAccessTokenSecret ?? "",
             };
 
       if (!hasXAuth(auth)) continue;
@@ -140,7 +179,7 @@ async function handler(req: NextRequest) {
       summary.postsAttempted += 1;
       const result = await publishToX(
         postText,
-        { campaignId: bot.campaignId || state.campaignId || "camp", day: nextItem.day },
+        { campaignId: artifact.campaignId || bot.campaignId || state.campaignId || "camp", day: nextItem.day },
         auth,
         nextItem.images ?? []
       );
@@ -155,14 +194,23 @@ async function handler(req: NextRequest) {
         ? posted
         : [...posted, nextItem.day].sort((a, b) => a - b);
       const nextIds = result.postId
-        ? Array.from(new Set([...(bot.postedTweetIds ?? []), result.postId]))
-        : bot.postedTweetIds ?? [];
+        ? Array.from(new Set([...(artifact.postedTweetIds ?? []), result.postId]))
+        : artifact.postedTweetIds ?? [];
+
+      const updatedArtifacts = artifacts.map((item) =>
+        item.id === artifact.id
+          ? {
+              ...item,
+              posted: nextPosted,
+              postedTweetIds: nextIds,
+              day: Math.min(plan.length, nextItem.day + 1),
+            }
+          : item
+      );
 
       updatedBots[idx] = {
         ...bot,
-        posted: nextPosted,
-        postedTweetIds: nextIds,
-        day: Math.min(plan.length, nextItem.day + 1),
+        conversationArtifacts: updatedArtifacts,
       };
       updated = true;
     }
