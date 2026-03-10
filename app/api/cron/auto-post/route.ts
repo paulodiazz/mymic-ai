@@ -40,6 +40,8 @@ type BotProfile = {
 type AppState = {
   autoPost?: boolean;
   bots?: BotProfile[];
+  activeBotId?: string | null;
+  conversationArtifacts?: ConversationArtifact[];
   ownerXToken?: string;
   ownerXApiKey?: string;
   ownerXApiSecret?: string;
@@ -59,23 +61,12 @@ function pickNextUnpostedDay(plan: Day[], posted: number[]): Day | null {
   return null;
 }
 
-function pickActiveArtifact(artifacts: ConversationArtifact[]): {
-  artifact: ConversationArtifact | null;
-  nextItem: Day | null;
-} {
-  const sorted = [...artifacts].sort((a, b) => {
+function sortArtifacts(artifacts: ConversationArtifact[]): ConversationArtifact[] {
+  return [...artifacts].sort((a, b) => {
     const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
     const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
     return bTime - aTime;
   });
-  for (const artifact of sorted) {
-    const plan = Array.isArray(artifact.plan) ? artifact.plan : [];
-    if (!plan.length) continue;
-    const posted = Array.isArray(artifact.posted) ? artifact.posted : [];
-    const nextItem = pickNextUnpostedDay(plan, posted);
-    if (nextItem) return { artifact, nextItem };
-  }
-  return { artifact: null, nextItem: null };
 }
 
 function hasXAuth(auth: {
@@ -144,75 +135,85 @@ async function handler(req: NextRequest) {
       const bot = bots[idx];
       summary.botsScanned += 1;
       const artifacts = Array.isArray(bot.conversationArtifacts)
-        ? bot.conversationArtifacts
+        ? sortArtifacts(bot.conversationArtifacts)
         : [];
       if (!artifacts.length) continue;
 
-      const { artifact, nextItem } = pickActiveArtifact(artifacts);
-      if (!artifact || !nextItem) continue;
+      const updatedArtifacts = [...artifacts];
+      let artifactsUpdated = false;
 
-      const plan = Array.isArray(artifact.plan) ? artifact.plan : [];
-      const posted = Array.isArray(artifact.posted) ? artifact.posted : [];
-      const postText = cleanPostText(nextItem.post || "");
-      if (!postText) continue;
+      for (let aIdx = 0; aIdx < artifacts.length; aIdx += 1) {
+        const artifact = artifacts[aIdx];
+        const plan = Array.isArray(artifact.plan) ? artifact.plan : [];
+        if (!plan.length) continue;
+        const posted = Array.isArray(artifact.posted) ? artifact.posted : [];
+        const nextItem = pickNextUnpostedDay(plan, posted);
+        if (!nextItem) continue;
 
-      const mode = artifact.actionCredentialMode ?? bot.actionCredentialMode ?? "owner";
-      const auth =
-        mode === "owner"
-          ? {
-              xToken: state.ownerXToken ?? "",
-              xApiKey: state.ownerXApiKey ?? "",
-              xApiSecret: state.ownerXApiSecret ?? "",
-              xAccessToken: state.ownerXAccessToken ?? "",
-              xAccessTokenSecret: state.ownerXAccessTokenSecret ?? "",
-            }
-          : {
-              xToken: artifact.xToken ?? bot.xToken ?? "",
-              xApiKey: artifact.xApiKey ?? bot.xApiKey ?? "",
-              xApiSecret: artifact.xApiSecret ?? bot.xApiSecret ?? "",
-              xAccessToken: artifact.xAccessToken ?? bot.xAccessToken ?? "",
-              xAccessTokenSecret: artifact.xAccessTokenSecret ?? bot.xAccessTokenSecret ?? "",
-            };
+        const postText = cleanPostText(nextItem.post || "");
+        if (!postText) continue;
 
-      if (!hasXAuth(auth)) continue;
+        const mode = artifact.actionCredentialMode ?? bot.actionCredentialMode ?? "owner";
+        const auth =
+          mode === "owner"
+            ? {
+                xToken: state.ownerXToken ?? "",
+                xApiKey: state.ownerXApiKey ?? "",
+                xApiSecret: state.ownerXApiSecret ?? "",
+                xAccessToken: state.ownerXAccessToken ?? "",
+                xAccessTokenSecret: state.ownerXAccessTokenSecret ?? "",
+              }
+            : {
+                xToken: artifact.xToken ?? bot.xToken ?? "",
+                xApiKey: artifact.xApiKey ?? bot.xApiKey ?? "",
+                xApiSecret: artifact.xApiSecret ?? bot.xApiSecret ?? "",
+                xAccessToken: artifact.xAccessToken ?? bot.xAccessToken ?? "",
+                xAccessTokenSecret: artifact.xAccessTokenSecret ?? bot.xAccessTokenSecret ?? "",
+              };
 
-      summary.postsAttempted += 1;
+        if (!hasXAuth(auth)) continue;
+
+        summary.postsAttempted += 1;
       const result = await publishToX(
         postText,
         { campaignId: artifact.campaignId || bot.campaignId || state.campaignId || "camp", day: nextItem.day },
         auth,
-        nextItem.images ?? []
+        nextItem.images ?? [],
+        { allowDuplicateSuffix: false }
       );
 
-      if (!result.ok) {
-        summary.postsFailed += 1;
-        continue;
+        if (!result.ok) {
+          summary.postsFailed += 1;
+          continue;
+        }
+
+        summary.postsSucceeded += 1;
+        const nextPosted = posted.includes(nextItem.day)
+          ? posted
+          : [...posted, nextItem.day].sort((a, b) => a - b);
+        const nextIds = result.postId
+          ? Array.from(new Set([...(artifact.postedTweetIds ?? []), result.postId]))
+          : artifact.postedTweetIds ?? [];
+
+        updatedArtifacts[aIdx] = {
+          ...artifact,
+          posted: nextPosted,
+          postedTweetIds: nextIds,
+          day: Math.min(plan.length, nextItem.day + 1),
+        };
+        artifactsUpdated = true;
       }
 
-      summary.postsSucceeded += 1;
-      const nextPosted = posted.includes(nextItem.day)
-        ? posted
-        : [...posted, nextItem.day].sort((a, b) => a - b);
-      const nextIds = result.postId
-        ? Array.from(new Set([...(artifact.postedTweetIds ?? []), result.postId]))
-        : artifact.postedTweetIds ?? [];
-
-      const updatedArtifacts = artifacts.map((item) =>
-        item.id === artifact.id
-          ? {
-              ...item,
-              posted: nextPosted,
-              postedTweetIds: nextIds,
-              day: Math.min(plan.length, nextItem.day + 1),
-            }
-          : item
-      );
-
-      updatedBots[idx] = {
-        ...bot,
-        conversationArtifacts: updatedArtifacts,
-      };
-      updated = true;
+      if (artifactsUpdated) {
+        updatedBots[idx] = {
+          ...bot,
+          conversationArtifacts: updatedArtifacts,
+        };
+        updated = true;
+        if (state.activeBotId && state.activeBotId === bot.id) {
+          state.conversationArtifacts = updatedArtifacts;
+        }
+      }
     }
 
     if (updated) {

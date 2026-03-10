@@ -130,12 +130,14 @@ export async function publishToX(
   text: string,
   context: { campaignId: string; day: number },
   auth: XAuth,
-  images: string[] = []
+  images: string[] = [],
+  options: { allowDuplicateSuffix?: boolean } = {}
 ): Promise<XPublishResult> {
   const hasBearer = Boolean(auth.xToken);
   const hasOauth1 = Boolean(
     auth.xApiKey && auth.xApiSecret && auth.xAccessToken && auth.xAccessTokenSecret
   );
+  const allowDuplicateSuffix = options.allowDuplicateSuffix !== false;
 
   if (!hasBearer && !hasOauth1) {
     return {
@@ -265,7 +267,7 @@ export async function publishToX(
     }
 
     // Retry once with unique suffix when x rejects duplicate content.
-    if (response.status === 403) {
+    if (response.status === 403 && allowDuplicateSuffix) {
       let detail403 = "";
       try {
         const e403 = (await response.json()) as {
