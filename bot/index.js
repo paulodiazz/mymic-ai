@@ -10,7 +10,14 @@ const required = (name) => {
   return value.trim();
 };
 
-const DISCORD_BOT_TOKEN = required("DISCORD_BOT_TOKEN");
+const normalizeToken = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/^bot\s+/i, "")
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
+
+const DISCORD_BOT_TOKEN = normalizeToken(required("DISCORD_BOT_TOKEN"));
 const DISCORD_CHANNEL_ID = required("DISCORD_CHANNEL_ID");
 const OPENAI_API_KEY = required("OPENAI_API_KEY");
 
@@ -316,6 +323,16 @@ const client = new Client({
 
 let lastReplyAt = 0;
 
+client.on("error", (error) => {
+  console.error("[bot] client error", error);
+});
+client.on("shardError", (error) => {
+  console.error("[bot] shard error", error);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[bot] unhandled rejection", reason);
+});
+
 client.on("ready", () => {
   console.log(`[bot] logged in as ${client.user?.tag || "unknown"}`);
 });
@@ -395,4 +412,7 @@ server.listen(port, () => {
   console.log(`[bot] http server on ${port}`);
 });
 
-client.login(DISCORD_BOT_TOKEN);
+client.login(DISCORD_BOT_TOKEN).catch((error) => {
+  console.error("[bot] login failed", error);
+  process.exit(1);
+});
