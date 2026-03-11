@@ -61,6 +61,9 @@ type Day = {
   day: number;
   post: string;
   play: string;
+  format?: string;
+  pillar?: string;
+  imageRequired?: boolean;
   images?: string[];
   imagePrompt?: string;
   imagePromptOverride?: string;
@@ -389,6 +392,33 @@ function extractRelatedToPhrase(text: string): string {
   return match[1].trim().replace(/\s+/g, " ");
 }
 
+function cleanProductName(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^\W+|\W+$/g, "")
+    .trim();
+}
+
+function inferProductNameFromBody(body: string): string {
+  const pivotMatch =
+    body.match(/pivot(?:ed)?\s+(?:to|into)\s+([^.,;\n]{3,120})/i)?.[1] ?? "";
+  if (pivotMatch) return cleanProductName(pivotMatch);
+  const focusMatch =
+    body.match(/now\s+(?:focused|focusing)\s+on\s+([^.,;\n]{3,120})/i)?.[1] ?? "";
+  if (focusMatch) return cleanProductName(focusMatch);
+  const buildMatch =
+    body.match(
+      /(?:we\s+are|we're|now\s+we're|we\s+just)\s+(?:building|shipping|launching|working on|focusing on|pivoting to)\s+([^.,;\n]{3,120})/i
+    )?.[1] ?? "";
+  if (buildMatch) return cleanProductName(buildMatch);
+  const productMatch =
+    body.match(/(?:product|project)\s+(?:is|:)\s+([^.,;\n]{3,120})/i)?.[1] ?? "";
+  if (productMatch) return cleanProductName(productMatch);
+  const related = extractRelatedToPhrase(body);
+  if (related) return cleanProductName(related);
+  return "";
+}
+
 function inferAudience(text: string): string {
   const lower = text.toLowerCase();
   const explicit =
@@ -448,27 +478,23 @@ function buildArtifactFromDraft(
       lastConversationMessageId: latestConversationMessageId,
     };
   }
-  const body = messages.map((m) => m.text).join(" ").toLowerCase();
-  const relatedPhrase = extractRelatedToPhrase(body);
+  const rawBody = messages.map((m) => m.text).join(" ");
+  const body = rawBody.toLowerCase();
+  const inferredName = inferProductNameFromBody(rawBody);
   const inferredAudience = inferAudience(body) || existing?.audience || "";
   const inferredIntent = inferIntent(body) || existing?.intent || "";
-  const inferredName =
-    (relatedPhrase
-      ? relatedPhrase
-          .split(" ")
-          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-          .join(" ")
-      : "") ||
+  const fallbackName =
     existing?.productName ||
     (draft.sourceTitle && draft.sourceTitle.toLowerCase() !== "untitled thread"
       ? draft.sourceTitle
       : draft.sourceAuthor
         ? `${draft.sourceAuthor}'s project`
         : "unknown project");
+  const resolvedName = inferredName || fallbackName;
   const engagementSignal = body.includes("interested") || body.includes("okay");
   const summaryParts = [
     engagementSignal ? "customer engaged and asked about visibility support." : "",
-    inferredName ? `product focus: ${inferredName}.` : "",
+    resolvedName ? `product focus: ${resolvedName}.` : "",
     inferredAudience ? `audience: ${inferredAudience}.` : "",
     inferredIntent ? `intent: ${inferredIntent}.` : "",
     inferProductType(body) === "consulting" ? "context indicates a consultant-led service." : "",
@@ -486,7 +512,7 @@ function buildArtifactFromDraft(
     sourceTitle: draft.sourceTitle,
     sourceAuthor: draft.sourceAuthor,
     status: draft.status ?? "needs_reply",
-    productName: inferredName,
+    productName: resolvedName,
     productType: inferProductType(body) || existing?.productType || "",
     audience: inferredAudience,
     intent: inferredIntent,
@@ -516,10 +542,20 @@ function buildArtifactFromDraft(
 
 function buildCondensedContextFromMessages(
   messages: Array<{ id: string; author: string; text: string }>,
-): { summary: string; capturedUntilMessageId: string; capturedMessageCount: number; lastMessage: string } {
+): {
+  summary: string;
+  capturedUntilMessageId: string;
+  capturedMessageCount: number;
+  lastMessage: string;
+  productName: string;
+  productType: string;
+  audience: string;
+  intent: string;
+} {
   const safe = messages.filter((m) => Boolean(m.text?.trim()));
-  const body = safe.map((m) => m.text).join(" ").toLowerCase();
-  const product = extractRelatedToPhrase(body);
+  const rawBody = safe.map((m) => m.text).join(" ");
+  const body = rawBody.toLowerCase();
+  const product = inferProductNameFromBody(rawBody);
   const audience = inferAudience(body);
   const intent = inferIntent(body);
   const productType = inferProductType(body);
@@ -542,6 +578,10 @@ function buildCondensedContextFromMessages(
     capturedUntilMessageId: last?.id ?? "",
     capturedMessageCount: safe.length,
     lastMessage: last?.text ?? "",
+    productName: product,
+    productType,
+    audience,
+    intent,
   };
 }
 
@@ -621,13 +661,60 @@ function estimateTokensFromText(text: string): number {
 function buildCampaignPromptText(input: {
   days: number;
   campaignTone: string;
+  imageCount: number;
   productName: string;
   productType: string;
   audience: string;
   intent: string;
   summary: string;
+  lastMessage: string;
 }): string {
   return `
+AUTONOMOUS X CONTENT STRATEGY — MASTER PROMPT
+You are the content strategist for ${input.productName || "this brand"}.
+
+REQUIRED INPUTS (infer from context_summary + product inputs)
+BRAND VOICE
+- Core belief: infer from context_summary; if unclear, anchor on intent.
+- The enemy: infer the bad practice or mindset from context_summary.
+- What we never say: corporate speak, feature lists, vague claims.
+- Tone anchors: infer from campaign_tone.
+
+AUDIENCE
+- Who: ${input.audience || "infer from context_summary"}
+- Their real frustration: infer from context_summary.
+- What they want to believe is possible: infer from context_summary.
+- What they are skeptical of: infer from context_summary.
+
+CONTENT PILLARS
+Pick 3. Derive from context_summary + product_type + intent. Never repeat twice in a row.
+
+POST FORMATS
+REFRAME, EARNED INSIGHT, TENSION, SPECIFIC STORY, SHARP TAKE (rotate, never repeat back-to-back).
+
+MODE 1 — PLAN (14-day plan)
+Days 1-3: Earn attention (no product).
+Days 4-6: Create tension (no product).
+Days 7-9: Introduce the lens (product emerges).
+Days 10-12: Prove it (specifics + numbers).
+Days 13-14: Convert belief (conviction + soft CTA).
+
+RULES
+- Max 260 chars, no hashtags, no links.
+- First line stops the scroll.
+- Never start with product name, "We", or "I".
+- No two consecutive posts in same format or pillar.
+- At least 2 opinion-led posts.
+- At least 1 post references a current industry tension.
+- Do not mention product before Day 7.
+
+IMAGE ASSIGNMENT
+Total images allowed: ${input.imageCount} between 0 and 14.
+If IMAGE_COUNT > 0, assign images to highest-impact days and describe the exact visual.
+
+OUTPUT FORMAT PER POST
+- day, post, play, format, pillar, image (YES/NO + description).
+
 create a ${input.days}-day social campaign plan.
 rules:
 - output JSON array only, no prose, no code fences
@@ -643,6 +730,7 @@ product_type: ${input.productType}
 audience: ${input.audience}
 intent: ${input.intent}
 context_summary: ${input.summary}
+last_message: ${input.lastMessage}
 `;
 }
 
@@ -811,6 +899,7 @@ export default function Home() {
   const [automationRunning, setAutomationRunning] = useState(false);
   const [automationMsg, setAutomationMsg] = useState("");
   const [automationLog, setAutomationLog] = useState<string[]>([]);
+  const [campaignArchiveViewId, setCampaignArchiveViewId] = useState<string | null>(null);
   const [discordSyncing, setDiscordSyncing] = useState(false);
   const [discordGenerating, setDiscordGenerating] = useState(false);
   const [discordMsg, setDiscordMsg] = useState("");
@@ -846,54 +935,84 @@ export default function Home() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("user_app_state")
-        .select("state")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (error) {
-        setAuthMsg("could not load your cloud state.");
+      const accessToken = session?.access_token ?? "";
+      if (!accessToken) {
         setStateLoaded(true);
         return;
       }
 
-      if (data?.state) {
-        const merged = { ...DEFAULT_STATE, ...(data.state as Partial<AppState>) };
-        if (!merged.campaignId) merged.campaignId = newCampaignId();
-        if (!Array.isArray(merged.campaignArchive)) merged.campaignArchive = [];
-        merged.conversationArtifacts = Array.isArray(merged.conversationArtifacts)
-          ? merged.conversationArtifacts.map((item) =>
-              normalizeConversationArtifact(item as Partial<ConversationArtifact>),
-            )
-          : [];
-        setState(merged);
-      } else {
-        await supabase
-          .from("user_app_state")
-          .upsert(
-            { user_id: userId, state: { ...DEFAULT_STATE, campaignId: newCampaignId() } },
-            { onConflict: "user_id" }
-          );
-        setState({ ...DEFAULT_STATE, campaignId: newCampaignId() });
+      try {
+        const r = await fetch("/api/state/load", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({}),
+        });
+        const d = (await r.json()) as { ok: boolean; error?: string; state?: AppState | null };
+        if (!d.ok) {
+          setAuthMsg(d.error ?? "could not load your cloud state.");
+          setStateLoaded(true);
+          return;
+        }
+
+        if (d.state) {
+          const merged = { ...DEFAULT_STATE, ...(d.state as Partial<AppState>) };
+          if (!merged.campaignId) merged.campaignId = newCampaignId();
+          if (!Array.isArray(merged.campaignArchive)) merged.campaignArchive = [];
+          merged.conversationArtifacts = Array.isArray(merged.conversationArtifacts)
+            ? merged.conversationArtifacts.map((item) =>
+                normalizeConversationArtifact(item as Partial<ConversationArtifact>),
+              )
+            : [];
+          setState(merged);
+        } else {
+          const fresh = { ...DEFAULT_STATE, campaignId: newCampaignId() };
+          setState(fresh);
+          await fetch("/api/state/save", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({ state: fresh }),
+          });
+        }
+      } catch {
+        setAuthMsg("could not load your cloud state.");
       }
 
       setStateLoaded(true);
     }
 
     loadState();
-  }, [userId]);
+  }, [userId, session?.access_token]);
 
   useEffect(() => {
-    if (!userId || !stateLoaded || !supabase) return;
-    const sb = supabase;
+    if (!userId || !stateLoaded) return;
+    const accessToken = session?.access_token ?? "";
+    if (!accessToken) return;
     const timer = setTimeout(async () => {
-      await sb
-        .from("user_app_state")
-        .upsert({ user_id: userId, state }, { onConflict: "user_id" });
+      try {
+        const r = await fetch("/api/state/save", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ state }),
+        });
+        const d = (await r.json()) as { ok: boolean; error?: string };
+        if (!d.ok) {
+          setAuthMsg(d.error ?? "cloud save failed.");
+        }
+      } catch {
+        setAuthMsg("cloud save failed.");
+      }
     }, 500);
     return () => clearTimeout(timer);
-  }, [userId, state, stateLoaded]);
+  }, [userId, state, stateLoaded, session?.access_token]);
 
   useEffect(() => {
     const handleMove = (event: MouseEvent) => {
@@ -914,36 +1033,7 @@ export default function Home() {
     }
   }, [state.conversationArtifacts, selectedArtifactId]);
 
-  useEffect(() => {
-    if (!supabase || !userId || !stateLoaded) return;
-    const resetKey = "mymic_context_cache_reset_v1";
-    const alreadyReset = window.localStorage.getItem(resetKey) === "1";
-    if (alreadyReset) return;
-    const hasCachedContext =
-      state.conversationArtifacts.length > 0 ||
-      state.discordPendingDrafts.length > 0 ||
-      state.discordActiveThreads.length > 0 ||
-      state.discordLearningLog.length > 0 ||
-      state.bots.some(
-        (bot) =>
-          (bot.conversationArtifacts?.length ?? 0) > 0 ||
-          (bot.discordPendingDrafts?.length ?? 0) > 0 ||
-          (bot.discordActiveThreads?.length ?? 0) > 0 ||
-          (bot.discordLearningLog?.length ?? 0) > 0,
-      );
-    if (!hasCachedContext) {
-      window.localStorage.setItem(resetKey, "1");
-      return;
-    }
-    const cleaned = wipeConversationCache(state);
-    setState(cleaned);
-    setSelectedArtifactId(null);
-    setDiscordMsg("conversation context + generated replies were reset for clean testing.");
-    void supabase
-      .from("user_app_state")
-      .upsert({ user_id: userId, state: cleaned }, { onConflict: "user_id" });
-    window.localStorage.setItem(resetKey, "1");
-  }, [supabase, userId, stateLoaded, state]);
+  // Removed the one-time auto reset that could wipe bots/credentials unexpectedly.
 
   const primaryArtifact =
     state.conversationArtifacts.find((item) => {
@@ -976,10 +1066,15 @@ export default function Home() {
   const actionPlan = selectedArtifact?.plan ?? [];
   const actionDay = selectedArtifact?.day ?? 1;
   const today = actionPlan[actionDay - 1];
+  const archiveView =
+    campaignArchiveViewId && selectedArtifact?.campaignArchive
+      ? selectedArtifact.campaignArchive.find((item) => item.id === campaignArchiveViewId) ?? null
+      : null;
+  const campaignPlan = archiveView?.plan ?? actionPlan;
+  const campaignPosted = archiveView?.posted ?? selectedArtifact?.posted ?? [];
   const selectedTab =
     state.selectedTab === "account" ? "product" : state.selectedTab;
   const todayCleanPost = today ? cleanPostText(today.post) : "";
-  const scheduledDays = actionPlan.slice(actionDay - 1, actionDay + 4);
   const progress = actionPlan.length ? Math.round((actionDay / 14) * 100) : 0;
   const postedCount = selectedArtifact?.posted?.length ?? 0;
   const isMasterUser = (session?.user?.email ?? "").toLowerCase() === MASTER_EMAIL;
@@ -1002,11 +1097,13 @@ export default function Home() {
     const prompt = buildCampaignPromptText({
       days: campaignDays,
       campaignTone: state.campaignTone || "balanced, clear, confident",
+      imageCount,
       productName: selectedArtifact?.productName ?? "unknown",
       productType: selectedArtifact?.productType ?? "unknown",
       audience: selectedArtifact?.audience ?? "unknown",
       intent: selectedArtifact?.intent ?? "unknown",
       summary: selectedArtifact?.contextSummary ?? "unknown",
+      lastMessage: selectedArtifact?.lastMessage ?? "",
     });
     return estimateTokensFromText(`${CAMPAIGN_SYSTEM}\n${prompt}`);
   }, [
@@ -1017,6 +1114,7 @@ export default function Home() {
     selectedArtifact?.intent,
     selectedArtifact?.contextSummary,
     state.campaignTone,
+    imageCount,
   ]);
   const estimatedOutputTokens = campaignDays * 120;
   const estimatedInputCost = (estimatedInputTokens / 1_000_000) * PRICING.inputPer1M;
@@ -1034,23 +1132,29 @@ export default function Home() {
     return status === "waiting" || status === "active";
   }).length;
   const dayViewItem =
-    actionPlan.find((item) => item.day === campaignDayFocus) ?? actionPlan[0] ?? null;
+    campaignPlan.find((item) => item.day === campaignDayFocus) ?? campaignPlan[0] ?? null;
   const dayViewIsPosted = dayViewItem
-    ? (selectedArtifact?.posted ?? []).includes(dayViewItem.day)
+    ? campaignPosted.includes(dayViewItem.day)
     : false;
 
   useEffect(() => {
-    if (!actionPlan.length) {
+    if (!campaignPlan.length) {
       setCampaignDayFocus(1);
       return;
     }
     setCampaignDayFocus((prev) => {
-      const max = actionPlan.length;
-      const desired = selectedArtifact?.day ?? 1;
+      const max = campaignPlan.length;
+      const desired = archiveView ? 1 : selectedArtifact?.day ?? 1;
       if (prev < 1 || prev > max) return Math.min(max, Math.max(1, desired));
       return prev;
     });
-  }, [actionPlan.length, selectedArtifact?.day]);
+  }, [campaignPlan.length, selectedArtifact?.day, archiveView]);
+
+  useEffect(() => {
+    if (campaignArchiveViewId) {
+      setCampaignDayFocus(1);
+    }
+  }, [campaignArchiveViewId]);
 
   useEffect(() => {
     if (state.selectedTab === "account") {
@@ -1128,10 +1232,22 @@ export default function Home() {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   const saveStateNow = async (next: AppState = state) => {
-    if (!userId || !supabase) return;
-    await supabase
-      .from("user_app_state")
-      .upsert({ user_id: userId, state: next }, { onConflict: "user_id" });
+    const accessToken = session?.access_token ?? "";
+    if (!userId || !accessToken) return;
+    try {
+      const r = await fetch("/api/state/save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ state: next }),
+      });
+      const d = (await r.json()) as { ok: boolean; error?: string };
+      if (!d.ok) setAuthMsg(d.error ?? "cloud save failed.");
+    } catch {
+      setAuthMsg("cloud save failed.");
+    }
   };
 
   const signUp = async () => {
@@ -1163,8 +1279,22 @@ export default function Home() {
 
   const signOut = async () => {
     if (!supabase) return setAuthMsg("cloud auth is not configured yet.");
-    await saveStateNow();
-    await supabase.auth.signOut();
+    setAuthMsg("signing out...");
+    try {
+      await Promise.race([
+        saveStateNow(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("save timeout")), 2000)),
+      ]);
+    } catch {
+      // ignore save failure, continue sign out
+    }
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore sign out failure, still clear local state
+    }
+    setState(DEFAULT_STATE);
+    setSelectedArtifactId(null);
     setAuthMsg("signed out.");
   };
 
@@ -1454,11 +1584,13 @@ export default function Home() {
         body: JSON.stringify({
           openaiApiKey: state.openaiApiKey,
           campaignTone: state.campaignTone,
+          imageCount: state.campaignImageCount,
           productName: selectedArtifact.productName,
           productType: selectedArtifact.productType,
           audience: selectedArtifact.audience,
           intent: selectedArtifact.intent || state.goal,
           summary: selectedArtifact.contextSummary,
+          lastMessage: selectedArtifact.lastMessage,
           days: 14,
         }),
       });
@@ -1472,6 +1604,10 @@ export default function Home() {
           day: item.day || idx + 1,
           post: (item.post ?? "").trim(),
           play: (item.play ?? "").trim(),
+          format: item.format?.trim(),
+          pillar: item.pillar?.trim(),
+          imageRequired: item.imageRequired ?? false,
+          imagePrompt: item.imagePrompt,
         }))
         .filter((item) => item.post && item.play)
         .slice(0, 14)
@@ -1530,6 +1666,13 @@ export default function Home() {
     setImageSuggestions([]);
     setAutomationMsg("updating plan based on results...");
     try {
+      const leanPlan = selectedArtifact.plan.map((item) => ({
+        day: item.day,
+        post: cleanPostText(item.post).slice(0, 260),
+        play: (item.play ?? "").slice(0, 240),
+        format: item.format,
+        pillar: item.pillar,
+      }));
       const r = await fetch("/api/campaign/refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1541,7 +1684,7 @@ export default function Home() {
           audience: selectedArtifact.audience,
           intent: selectedArtifact.intent || state.goal,
           summary: selectedArtifact.contextSummary,
-          plan: selectedArtifact.plan,
+          plan: leanPlan,
           postedDays: selectedArtifact.posted ?? [],
           metrics: {
             views: selectedArtifact.views ?? 0,
@@ -1555,6 +1698,23 @@ export default function Home() {
         setAutomationMsg(d.error || "plan update failed.");
         return;
       }
+      const archive =
+        selectedArtifact.plan.length > 0
+          ? [
+              {
+                id: selectedArtifact.campaignId || newCampaignId(),
+                createdAt: new Date().toISOString(),
+                productName: selectedArtifact.productName,
+                plan: selectedArtifact.plan,
+                posted: selectedArtifact.posted,
+                postedTweetIds: selectedArtifact.postedTweetIds,
+                views: selectedArtifact.views,
+                replies: selectedArtifact.replies,
+                followers: selectedArtifact.followers,
+              },
+              ...selectedArtifact.campaignArchive,
+            ].slice(0, 20)
+          : selectedArtifact.campaignArchive;
       const existingByDay = new Map(selectedArtifact.plan.map((item) => [item.day, item]));
       const postedSet = new Set(selectedArtifact.posted ?? []);
       const merged = d.plan.map((item) => {
@@ -1562,12 +1722,15 @@ export default function Home() {
         if (existing && postedSet.has(item.day)) return existing;
         return {
           ...item,
+          format: existing?.format ?? item.format,
+          pillar: existing?.pillar ?? item.pillar,
+          imageRequired: existing?.imageRequired ?? item.imageRequired,
           images: existing?.images ?? [],
           imagePrompt: existing?.imagePrompt,
           imagePromptOverride: existing?.imagePromptOverride,
         };
       });
-      updateConversationArtifact(selectedArtifact.id, { plan: merged });
+      updateConversationArtifact(selectedArtifact.id, { plan: merged, campaignArchive: archive });
       setAutomationMsg("plan updated for remaining days.");
     } catch {
       setAutomationMsg("plan update failed.");
@@ -1598,27 +1761,43 @@ export default function Home() {
       setAutomationMsg("you already have that many images.");
       return;
     }
+    const requiredTargets = plan.filter(
+      (item) =>
+        item.imageRequired &&
+        !(item.images ?? []).length &&
+        !postedDays.includes(item.day)
+    );
     const suggestions = suggestImageDays(plan, remaining, postedDays);
     setImageSuggestions(suggestions);
-    const targets = suggestions
-      .map((item) => {
-        const planItem = plan.find((p) => p.day === item.day);
-        return planItem
-          ? {
-              day: planItem.day,
-              post: planItem.post,
-              play: planItem.play,
-              imagePrompt: planItem.imagePromptOverride,
-            }
-          : null;
-      })
-      .filter(Boolean) as Array<{ day: number; post: string; play: string; imagePrompt?: string }>;
-    if (targets.length === 0) {
+    const selectedTargets: Array<{ day: number; post: string; play: string; imagePrompt?: string }> = [];
+    for (const item of requiredTargets) {
+      if (selectedTargets.length >= remaining) break;
+      selectedTargets.push({
+        day: item.day,
+        post: item.post,
+        play: item.play,
+        imagePrompt: item.imagePromptOverride || item.imagePrompt,
+      });
+    }
+    if (selectedTargets.length < remaining) {
+      for (const suggestion of suggestions) {
+        if (selectedTargets.length >= remaining) break;
+        const planItem = plan.find((p) => p.day === suggestion.day);
+        if (!planItem) continue;
+        selectedTargets.push({
+          day: planItem.day,
+          post: planItem.post,
+          play: planItem.play,
+          imagePrompt: planItem.imagePromptOverride || planItem.imagePrompt,
+        });
+      }
+    }
+    if (selectedTargets.length === 0) {
       setAutomationMsg("no eligible days for images right now.");
       return;
     }
     setImageGenerating(true);
-    setAutomationMsg(`generating ${targets.length} image(s)...`);
+    setAutomationMsg(`generating ${selectedTargets.length} image(s)...`);
     try {
       const r = await fetch("/api/campaign/images", {
         method: "POST",
@@ -1633,7 +1812,7 @@ export default function Home() {
           audience: selectedArtifact.audience,
           intent: selectedArtifact.intent || state.goal,
           summary: selectedArtifact.contextSummary,
-          items: targets,
+          items: selectedTargets,
         }),
       });
       const d = (await r.json()) as {
@@ -1694,7 +1873,7 @@ export default function Home() {
               day: planItem.day,
               post: planItem.post,
               play: planItem.play,
-              imagePrompt: planItem.imagePromptOverride,
+              imagePrompt: planItem.imagePromptOverride || planItem.imagePrompt,
             },
           ],
         }),
@@ -1907,6 +2086,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: searchQuery,
+          productName: selectedArtifact?.productName ?? state.productName,
+          productType: selectedArtifact?.productType ?? state.productType,
+          audience: selectedArtifact?.audience ?? state.audience,
           maxResults: 10,
           connections: activeConnections,
         }),
@@ -2070,11 +2252,12 @@ export default function Home() {
         discordActiveThreads: active.slice(0, 100),
         conversationArtifacts: mergedArtifacts,
         productName:
-          state.productName ||
           seedArtifact?.productName ||
+          state.productName ||
           (state.productName || botNameInput || "my project"),
-        productType: state.productType || seedArtifact?.productType || state.productType,
-        audience: state.audience || seedArtifact?.audience || state.audience,
+        productType: seedArtifact?.productType || state.productType || state.productType,
+        audience: seedArtifact?.audience || state.audience || state.audience,
+        goal: seedArtifact?.intent || state.goal,
       });
       if (mergedArtifacts.length > 0) {
         setSelectedArtifactId(mergedArtifacts[0].id);
@@ -2114,6 +2297,10 @@ export default function Home() {
           capturedUntilMessageId: string;
           capturedMessageCount: number;
           lastMessage: string;
+          productName: string;
+          productType: string;
+          audience: string;
+          intent: string;
         }
       >();
       for (const draft of targets) {
@@ -2132,10 +2319,10 @@ export default function Home() {
             return {
               ...draft,
               artifactContext: {
-                productName: artifact?.productName || "",
-                productType: artifact?.productType || "",
-                audience: artifact?.audience || "",
-                intent: artifact?.intent || "",
+                productName: checkpoint?.productName || artifact?.productName || "",
+                productType: checkpoint?.productType || artifact?.productType || "",
+                audience: checkpoint?.audience || artifact?.audience || "",
+                intent: checkpoint?.intent || artifact?.intent || "",
                 summary: checkpoint?.summary || artifact?.contextSummary || "",
               },
               messagesSinceCheckpoint: getMessagesSinceCheckpoint(
@@ -2171,6 +2358,10 @@ export default function Home() {
         if (!checkpoint) return artifact;
         return {
           ...artifact,
+          productName: checkpoint.productName || artifact.productName,
+          productType: checkpoint.productType || artifact.productType,
+          audience: checkpoint.audience || artifact.audience,
+          intent: checkpoint.intent || artifact.intent,
           contextSummary: checkpoint.summary || artifact.contextSummary,
           contextCapturedUntilMessageId:
             checkpoint.capturedUntilMessageId || artifact.contextCapturedUntilMessageId,
@@ -2209,11 +2400,11 @@ export default function Home() {
     setDiscordPostingDraftId(draft.draftId);
     setDiscordMsg("new messages detected, updating context and refreshing reply...");
     try {
-      const condensed = buildCondensedContextFromMessages(draft.threadMessages ?? []);
-      const r = await fetch("/api/discord/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        const condensed = buildCondensedContextFromMessages(draft.threadMessages ?? []);
+        const r = await fetch("/api/discord/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
           openaiApiKey: state.openaiApiKey,
           toneProfile: state.toneProfile,
           refresh: true,
@@ -2221,10 +2412,10 @@ export default function Home() {
             {
               ...draft,
               artifactContext: {
-                productName: artifact?.productName || "",
-                productType: artifact?.productType || "",
-                audience: artifact?.audience || "",
-                intent: artifact?.intent || "",
+                productName: condensed.productName || artifact?.productName || "",
+                productType: condensed.productType || artifact?.productType || "",
+                audience: condensed.audience || artifact?.audience || "",
+                intent: condensed.intent || artifact?.intent || "",
                 summary: condensed.summary || artifact?.contextSummary || "",
               },
               messagesSinceCheckpoint: getMessagesSinceCheckpoint(
@@ -2267,6 +2458,10 @@ export default function Home() {
           item.draftId === draft.draftId
             ? {
                 ...item,
+                productName: condensed.productName || item.productName,
+                productType: condensed.productType || item.productType,
+                audience: condensed.audience || item.audience,
+                intent: condensed.intent || item.intent,
                 contextSummary: condensed.summary || item.contextSummary,
                 contextCapturedUntilMessageId:
                   condensed.capturedUntilMessageId || item.contextCapturedUntilMessageId,
@@ -2486,10 +2681,10 @@ export default function Home() {
         />
         <div className="mx-auto max-w-6xl space-y-24 text-[var(--text-primary)]">
           <section className="cyber-float pt-8" style={{ "--delay": "40ms" } as CSSProperties}>
-            <p className="font-[family-name:var(--font-space-mono)] text-xs uppercase tracking-[0.26em] text-[var(--text-dim)]">
+            <p className="font-[family-name:var(--font-manrope)] text-xs uppercase tracking-[0.26em] text-[var(--text-dim)]">
               mymic ai
             </p>
-            <h1 className="mt-4 max-w-5xl font-[family-name:var(--font-orbitron)] text-4xl uppercase leading-tight [text-shadow:0_0_20px_color-mix(in_srgb,var(--glow-pink)_35%,transparent)] sm:text-6xl">
+            <h1 className="mt-4 max-w-5xl font-[family-name:var(--font-instrument-serif)] text-4xl uppercase leading-tight [text-shadow:0_0_20px_color-mix(in_srgb,var(--glow-pink)_35%,transparent)] sm:text-6xl">
               your product is good. your distribution is broken.
             </h1>
             <p className="mt-6 max-w-3xl text-base text-[var(--text-primary)]/85 sm:text-lg">
@@ -2518,7 +2713,7 @@ export default function Home() {
               {identities.map((item) => (
                 <Card key={item.title} className="cyber-card" shadow="none">
                   <CardBody className="gap-2">
-                    <p className="font-[family-name:var(--font-orbitron)] text-sm uppercase tracking-[0.18em]">
+                    <p className="font-[family-name:var(--font-instrument-serif)] text-sm uppercase tracking-[0.18em]">
                       {item.title}
                     </p>
                     <p className="text-sm text-[var(--text-primary)]/85">{item.line}</p>
@@ -2539,14 +2734,14 @@ export default function Home() {
           </section>
 
           <section id="how-it-works" className="cyber-float" style={{ "--delay": "170ms" } as CSSProperties}>
-            <h2 className="font-[family-name:var(--font-orbitron)] text-2xl uppercase sm:text-4xl">
+            <h2 className="font-[family-name:var(--font-instrument-serif)] text-2xl uppercase sm:text-4xl">
               how it works
             </h2>
             <div className="mt-6 grid gap-4 lg:grid-cols-3">
               {steps.map((step, i) => (
                 <Card key={step.title} className="cyber-card cyber-float" shadow="none" style={{ "--delay": `${240 + i * 70}ms` } as CSSProperties}>
                   <CardBody className="gap-2">
-                    <p className="font-[family-name:var(--font-orbitron)] text-sm uppercase tracking-[0.15em]">
+                    <p className="font-[family-name:var(--font-instrument-serif)] text-sm uppercase tracking-[0.15em]">
                       {step.title}
                     </p>
                     <p className="text-sm text-[var(--text-primary)]/85">{step.line}</p>
@@ -2557,14 +2752,14 @@ export default function Home() {
           </section>
 
           <section className="cyber-float" style={{ "--delay": "210ms" } as CSSProperties}>
-            <h2 className="font-[family-name:var(--font-orbitron)] text-2xl uppercase sm:text-4xl">
+            <h2 className="font-[family-name:var(--font-instrument-serif)] text-2xl uppercase sm:text-4xl">
               core features
             </h2>
             <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {features.map((feature) => (
                 <Card key={feature} className="cyber-card" shadow="none">
                   <CardBody>
-                    <p className="font-[family-name:var(--font-space-mono)] text-sm uppercase tracking-[0.12em] text-[var(--text-primary)]/90">
+                    <p className="font-[family-name:var(--font-manrope)] text-sm uppercase tracking-[0.12em] text-[var(--text-primary)]/90">
                       {feature}
                     </p>
                   </CardBody>
@@ -2579,7 +2774,7 @@ export default function Home() {
                 <p className="text-sm uppercase tracking-[0.18em] text-[var(--text-dim)]">
                   always on
                 </p>
-                <p className="mx-auto max-w-4xl font-[family-name:var(--font-orbitron)] text-xl uppercase leading-relaxed sm:text-3xl">
+                <p className="mx-auto max-w-4xl font-[family-name:var(--font-instrument-serif)] text-xl uppercase leading-relaxed sm:text-3xl">
                   while you&apos;re building, mymic is watching. while you&apos;re sleeping, mymic is
                   present.
                 </p>
@@ -2591,13 +2786,13 @@ export default function Home() {
           </section>
 
           <section className="cyber-float text-center" style={{ "--delay": "290ms" } as CSSProperties}>
-            <p className="font-[family-name:var(--font-space-mono)] text-sm uppercase tracking-[0.18em] text-[var(--text-dim)]">
+            <p className="font-[family-name:var(--font-manrope)] text-sm uppercase tracking-[0.18em] text-[var(--text-dim)]">
               built for people who ship. trusted by builders who don&apos;t have time to be everywhere.
             </p>
           </section>
 
           <section className="cyber-float pb-8 text-center" style={{ "--delay": "330ms" } as CSSProperties}>
-            <h2 className="font-[family-name:var(--font-orbitron)] text-3xl uppercase [text-shadow:0_0_24px_color-mix(in_srgb,var(--glow-purple)_40%,transparent)] sm:text-5xl">
+            <h2 className="font-[family-name:var(--font-instrument-serif)] text-3xl uppercase [text-shadow:0_0_24px_color-mix(in_srgb,var(--glow-purple)_40%,transparent)] sm:text-5xl">
               your audience is already out there. they just haven&apos;t found you yet.
             </h2>
             <p className="mx-auto mt-4 max-w-2xl text-[var(--text-primary)]/85">
@@ -2617,7 +2812,7 @@ export default function Home() {
 
           <footer className="cyber-float border-t border-[color:color-mix(in_srgb,var(--glow-purple)_20%,transparent)] py-8 text-sm text-[var(--text-dim)]" style={{ "--delay": "360ms" } as CSSProperties}>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="font-[family-name:var(--font-orbitron)] uppercase">mymic ai</p>
+              <p className="font-[family-name:var(--font-instrument-serif)] uppercase">mymic ai</p>
               <p>built for builders who ship.</p>
             </div>
           </footer>
@@ -2632,7 +2827,7 @@ export default function Home() {
       <div className="cyber-noise pointer-events-none fixed inset-0 -z-10" />
       <div className="mx-auto grid max-w-7xl gap-6 text-[var(--text-primary)] lg:grid-cols-[250px_minmax(0,1fr)]">
         <Card className="cyber-card h-fit lg:sticky lg:top-6" shadow="none">
-          <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+          <CardHeader className="pb-0 font-[family-name:var(--font-instrument-serif)] uppercase">
             menu
           </CardHeader>
           <CardBody className="gap-2">
@@ -2698,10 +2893,10 @@ export default function Home() {
         <div>
         <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="font-[family-name:var(--font-space-mono)] text-xs uppercase tracking-[0.26em] text-[var(--text-dim)]">
+            <p className="font-[family-name:var(--font-manrope)] text-xs uppercase tracking-[0.26em] text-[var(--text-dim)]">
               mymic ai
             </p>
-            <h1 className="mt-2 font-[family-name:var(--font-orbitron)] text-3xl uppercase sm:text-5xl">
+            <h1 className="mt-2 font-[family-name:var(--font-instrument-serif)] text-3xl uppercase sm:text-5xl">
               growth console
             </h1>
           </div>
@@ -2710,7 +2905,7 @@ export default function Home() {
             variant="flat"
             aria-label="open account"
             onPress={() => setAccountOpen(true)}
-            className="font-[family-name:var(--font-space-mono)]"
+            className="font-[family-name:var(--font-manrope)]"
           >
             ACCOUNT
           </Button>
@@ -2718,7 +2913,7 @@ export default function Home() {
 
         <Card className="cyber-card mb-6" shadow="none">
           <CardBody className="gap-2 text-sm">
-            <p className="font-[family-name:var(--font-orbitron)] uppercase">quick guide</p>
+            <p className="font-[family-name:var(--font-instrument-serif)] uppercase">quick guide</p>
             <p className="text-[var(--text-primary)]/85">
               as power user, create one autonomous bot per project, then run publishing +
               engagement and track traction.
@@ -2736,7 +2931,7 @@ export default function Home() {
               selectedTab: String(key) as "power" | "product" | "connections" | "actions",
             })
           }
-          classNames={{ tab: "font-[family-name:var(--font-space-mono)] uppercase tracking-wider" }}
+          classNames={{ tab: "font-[family-name:var(--font-manrope)] uppercase tracking-wider" }}
         >
           {isMasterUser && (
             <Tab key="power" title="Power User">
@@ -2744,7 +2939,7 @@ export default function Home() {
                 <Card className="cyber-card lg:col-span-2" shadow="none">
                   <CardHeader className="pb-0">
                     <div className="flex w-full items-center justify-between gap-3">
-                      <span className="font-[family-name:var(--font-orbitron)] uppercase">
+                      <span className="font-[family-name:var(--font-instrument-serif)] uppercase">
                         project bots
                       </span>
                       <Button
@@ -2764,7 +2959,7 @@ export default function Home() {
                   <CardBody className="gap-3 text-sm">
                     {showBotControls && (
                       <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                        <p className="mb-2 font-[family-name:var(--font-orbitron)] text-xs uppercase text-[var(--text-dim)]">
+                        <p className="mb-2 font-[family-name:var(--font-instrument-serif)] text-xs uppercase text-[var(--text-dim)]">
                           bot controls
                         </p>
                         <Input
@@ -2918,7 +3113,7 @@ export default function Home() {
                   </CardBody>
                 </Card>
                 <Card className="cyber-card lg:col-span-2" shadow="none">
-                  <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+                  <CardHeader className="pb-0 font-[family-name:var(--font-instrument-serif)] uppercase">
                     discord approvals
                   </CardHeader>
                   <CardBody className="gap-3">
@@ -3179,7 +3374,7 @@ export default function Home() {
           <Tab key="product" title="Product">
             <div className="mt-4 grid gap-6 lg:grid-cols-2">
               <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+                <CardHeader className="pb-0 font-[family-name:var(--font-instrument-serif)] uppercase">
                   conversation artifacts
                 </CardHeader>
                 <CardBody className="gap-3">
@@ -3215,7 +3410,7 @@ export default function Home() {
                 </CardBody>
               </Card>
               <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">
+                <CardHeader className="pb-0 font-[family-name:var(--font-instrument-serif)] uppercase">
                   selected artifact
                 </CardHeader>
                 <CardBody>
@@ -3290,7 +3485,7 @@ export default function Home() {
           <Tab key="connections" title="Connections">
             <div className="mt-4 grid gap-6 lg:grid-cols-2">
               <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">owner credentials</CardHeader>
+                <CardHeader className="pb-0 font-[family-name:var(--font-instrument-serif)] uppercase">owner credentials</CardHeader>
                 <CardBody className="gap-3">
                     <Input
                       label="openai api key"
@@ -3313,7 +3508,7 @@ export default function Home() {
                 </CardBody>
               </Card>
               <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">product credentials</CardHeader>
+                <CardHeader className="pb-0 font-[family-name:var(--font-instrument-serif)] uppercase">product credentials</CardHeader>
                 <CardBody className="gap-3">
                   {!selectedArtifact ? (
                     <p className="text-sm text-[var(--text-dim)]">
@@ -3334,7 +3529,7 @@ export default function Home() {
                 </CardBody>
               </Card>
               <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">active bot context</CardHeader>
+                <CardHeader className="pb-0 font-[family-name:var(--font-instrument-serif)] uppercase">active bot context</CardHeader>
                 <CardBody className="gap-3">
                   <p className="text-xs text-[var(--text-dim)]">
                     manage creation + deletion in the power user tab. this section shows which bot
@@ -3366,7 +3561,7 @@ export default function Home() {
           <Tab key="actions" title="Actions">
             <div className="mt-4 grid gap-6 lg:grid-cols-2">
               <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">run campaign</CardHeader>
+                <CardHeader className="pb-0 font-[family-name:var(--font-instrument-serif)] uppercase">run campaign</CardHeader>
                 <CardBody className="gap-3">
                   <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
                     <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">campaign controls</p>
@@ -3581,16 +3776,6 @@ export default function Home() {
                   </Button>
                   {metricsMsg && <p className="text-xs text-[var(--text-dim)]">{metricsMsg}</p>}
                   {automationMsg && <p className="text-xs text-[var(--text-dim)]">{automationMsg}</p>}
-                  {scheduledDays.length > 0 && (
-                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
-                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">scheduled next</p>
-                      {scheduledDays.map((item) => (
-                        <p key={`scheduled-${item.day}`} className="mb-1">
-                          day {item.day}: {showFullPosts ? cleanPostText(item.post) : `${cleanPostText(item.post).slice(0, 90)}...`}
-                        </p>
-                      ))}
-                    </div>
-                  )}
                   {today?.images?.length ? (
                     <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
                       <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">today images</p>
@@ -3632,7 +3817,7 @@ export default function Home() {
                 </CardBody>
               </Card>
               <Card className="cyber-card" shadow="none">
-                <CardHeader className="pb-0 font-[family-name:var(--font-orbitron)] uppercase">progress</CardHeader>
+                <CardHeader className="pb-0 font-[family-name:var(--font-instrument-serif)] uppercase">progress</CardHeader>
                 <CardBody className="gap-3">
                   <p>plan: $10 / 14 days</p>
                   <p>mode: build traction first, then package bots for sale</p>
@@ -3650,10 +3835,10 @@ export default function Home() {
                     {selectedArtifact?.followers ?? 0}
                   </p>
                   <p>posted days: {postedCount}/14</p>
-                  <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
-                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                      <p className="uppercase tracking-[0.18em] text-[var(--text-dim)]">current campaign posts</p>
-                      <div className="flex flex-wrap gap-2">
+                    <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="uppercase tracking-[0.18em] text-[var(--text-dim)]">current campaign posts</p>
+                        <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
                           color="secondary"
@@ -3670,27 +3855,42 @@ export default function Home() {
                         >
                           day by day
                         </Button>
+                        </div>
                       </div>
-                    </div>
-                    {actionPlan.length === 0 ? (
-                      <p>no campaign generated yet.</p>
-                    ) : campaignView === "overview" ? (
-                      actionPlan.map((item) => (
-                        <p
-                          key={`day-${item.day}`}
-                          className={(selectedArtifact?.posted ?? []).includes(item.day) ? "text-emerald-300 mb-1" : "mb-1"}
-                        >
-                          day {item.day}: {showFullPosts ? cleanPostText(item.post) : `${cleanPostText(item.post).slice(0, 100)}...`}
-                        </p>
-                      ))
-                    ) : (
-                      <div className="space-y-3">
-                        <Pagination
-                          size="sm"
-                          total={actionPlan.length}
-                          page={campaignDayFocus}
-                          onChange={(page) => setCampaignDayFocus(page)}
-                        />
+                      {archiveView && (
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <Chip size="sm" color="secondary" variant="flat">
+                            viewing archive · {new Date(archiveView.createdAt).toLocaleDateString()}
+                          </Chip>
+                          <Button
+                            size="sm"
+                            color="secondary"
+                            variant="flat"
+                            onPress={() => setCampaignArchiveViewId(null)}
+                          >
+                            back to current
+                          </Button>
+                        </div>
+                      )}
+                      {campaignPlan.length === 0 ? (
+                        <p>no campaign generated yet.</p>
+                      ) : campaignView === "overview" ? (
+                        campaignPlan.map((item) => (
+                          <p
+                            key={`day-${item.day}`}
+                            className={campaignPosted.includes(item.day) ? "text-emerald-300 mb-1" : "mb-1"}
+                          >
+                            day {item.day}: {showFullPosts ? cleanPostText(item.post) : `${cleanPostText(item.post).slice(0, 100)}...`}
+                          </p>
+                        ))
+                      ) : (
+                        <div className="space-y-3">
+                          <Pagination
+                            size="sm"
+                            total={campaignPlan.length}
+                            page={campaignDayFocus}
+                            onChange={(page) => setCampaignDayFocus(page)}
+                          />
                         {dayViewItem ? (
                           <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm">
                             <div className="flex gap-3">
@@ -3768,10 +3968,21 @@ export default function Home() {
                   {(selectedArtifact?.campaignArchive?.length ?? 0) > 0 && (
                     <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_18%,transparent)] bg-black/20 p-3 text-xs">
                       <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">previous campaigns</p>
-                      {(selectedArtifact?.campaignArchive ?? []).slice(0, 4).map((c) => (
-                        <p key={c.id} className="mb-1">
-                          {new Date(c.createdAt).toLocaleDateString()} | {c.productName || "campaign"} | posted {c.posted.length}/14
-                        </p>
+                      {(selectedArtifact?.campaignArchive ?? []).slice(0, 4).map((c, idx) => (
+                        <div key={`archive-${c.id}-${c.createdAt}-${idx}`} className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <p>
+                            {new Date(c.createdAt).toLocaleDateString()} | {c.productName || "campaign"} | posted{" "}
+                            {c.posted.length}/14
+                          </p>
+                          <Button
+                            size="sm"
+                            color="secondary"
+                            variant="flat"
+                            onPress={() => setCampaignArchiveViewId(c.id)}
+                          >
+                            view
+                          </Button>
+                        </div>
                       ))}
                     </div>
                   )}
@@ -3786,10 +3997,10 @@ export default function Home() {
         <ModalContent className="cyber-card">
           {() => (
             <>
-              <ModalHeader className="font-[family-name:var(--font-orbitron)] uppercase">
+              <ModalHeader className="font-[family-name:var(--font-instrument-serif)] uppercase">
                 account
               </ModalHeader>
-              <ModalBody className="gap-3 font-[family-name:var(--font-space-mono)] text-sm">
+              <ModalBody className="gap-3 font-[family-name:var(--font-manrope)] text-sm">
                 {!session ? (
                   <>
                     <div className="flex gap-2">
@@ -3871,10 +4082,10 @@ export default function Home() {
         <ModalContent className="cyber-card">
           {(onClose) => (
             <>
-              <ModalHeader className="font-[family-name:var(--font-orbitron)] uppercase">
+              <ModalHeader className="font-[family-name:var(--font-instrument-serif)] uppercase">
                 x (twitter) developer app setup guide
               </ModalHeader>
-              <ModalBody className="font-[family-name:var(--font-space-mono)] text-sm text-[var(--text-primary)]/90">
+              <ModalBody className="font-[family-name:var(--font-manrope)] text-sm text-[var(--text-primary)]/90">
                 <p>
                   <strong>step 1: create your developer account</strong> <br />
                   go to developer.twitter.com and sign in with your x account. if you do not
@@ -3926,4 +4137,5 @@ export default function Home() {
     </main>
   );
 }
+
 

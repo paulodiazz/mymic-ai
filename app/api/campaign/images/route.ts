@@ -87,7 +87,7 @@ post: ${item.post}
 ${customPrompt ? `custom art direction from user: ${customPrompt}` : ""}
 
 visual guidelines:
-- no text in the image
+- avoid text in the image unless the custom art direction explicitly asks for it
 - bold, modern, high-contrast, minimal clutter
 - convey the idea of the post without logos or brand marks
 `;

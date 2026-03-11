@@ -18,34 +18,43 @@
 }
 
 :root {
-  --bg: #0a0608;
-  --surface: #110a10;
-  --accent-magenta: #d4006a;
-  --accent-violet: #7b00cc;
-  --accent-blue: #1a0aff;
-  --glow-pink: #ff2d8a;
-  --glow-purple: #9b30ff;
-  --text-primary: #f0e0f5;
-  --text-dim: #6a4a7a;
+  --bg: #0b0c0f;
+  --surface: #12131a;
+  --accent-magenta: #f06b5f;
+  --accent-violet: #42b3a4;
+  --accent-blue: #6f7cff;
+  --glow-pink: #f07a6d;
+  --glow-purple: #46bfae;
+  --text-primary: #f3efe8;
+  --text-dim: #8a8176;
 }
 
 body {
   background: var(--bg);
   color: var(--text-primary);
+  background-image:
+    radial-gradient(120% 120% at 10% 0%, #1a1f2a 0%, transparent 55%),
+    radial-gradient(80% 80% at 90% 10%, #102320 0%, transparent 55%),
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-primary) 10%, transparent) 0 1px,
+      transparent 1px 6px
+    );
+  background-attachment: fixed;
 }
 
 @keyframes cyberBreathe {
   0% {
     transform: scale(1) translate3d(0, 0, 0);
-    filter: hue-rotate(0deg);
+    filter: saturate(1);
   }
   50% {
-    transform: scale(1.04) translate3d(-2%, 1%, 0);
-    filter: hue-rotate(-8deg);
+    transform: scale(1.03) translate3d(-1%, 1%, 0);
+    filter: saturate(1.08);
   }
   100% {
     transform: scale(1) translate3d(0, 0, 0);
-    filter: hue-rotate(0deg);
+    filter: saturate(1);
   }
 }
 
@@ -63,51 +72,52 @@ body {
 @keyframes glowPulse {
   0% {
     box-shadow:
-      inset 0 0 0 1px color-mix(in srgb, var(--glow-purple) 48%, transparent),
-      0 0 28px color-mix(in srgb, var(--glow-purple) 22%, transparent);
+      inset 0 0 0 1px color-mix(in srgb, var(--glow-purple) 26%, transparent),
+      0 12px 26px color-mix(in srgb, var(--glow-purple) 16%, transparent);
   }
   50% {
     box-shadow:
-      inset 0 0 0 1px color-mix(in srgb, var(--glow-pink) 78%, transparent),
-      0 0 42px color-mix(in srgb, var(--glow-pink) 34%, transparent);
+      inset 0 0 0 1px color-mix(in srgb, var(--glow-pink) 45%, transparent),
+      0 16px 34px color-mix(in srgb, var(--glow-pink) 22%, transparent);
   }
   100% {
     box-shadow:
-      inset 0 0 0 1px color-mix(in srgb, var(--glow-purple) 48%, transparent),
-      0 0 28px color-mix(in srgb, var(--glow-purple) 22%, transparent);
+      inset 0 0 0 1px color-mix(in srgb, var(--glow-purple) 26%, transparent),
+      0 12px 26px color-mix(in srgb, var(--glow-purple) 16%, transparent);
   }
 }
 
 @keyframes signalDrift {
   0% {
     background-position: 0% 0%, 100% 100%, 0 0;
-    filter: hue-rotate(0deg);
+    filter: saturate(1);
   }
   50% {
     background-position: 100% 40%, 0% 60%, 40px 0;
-    filter: hue-rotate(-12deg);
+    filter: saturate(1.08);
   }
   100% {
     background-position: 0% 0%, 100% 100%, 0 0;
-    filter: hue-rotate(0deg);
+    filter: saturate(1);
   }
 }
 
 .cyber-mesh {
   background:
-    radial-gradient(55% 65% at 12% 14%, color-mix(in srgb, var(--accent-violet) 48%, transparent) 0%, transparent 72%),
-    radial-gradient(45% 55% at 86% 8%, color-mix(in srgb, var(--accent-magenta) 45%, transparent) 0%, transparent 74%),
-    radial-gradient(60% 70% at 50% 92%, color-mix(in srgb, var(--accent-blue) 38%, transparent) 0%, transparent 78%),
-    linear-gradient(145deg, #050305 0%, #0a0608 45%, #120913 100%);
-  animation: cyberBreathe 16s ease-in-out infinite;
+    radial-gradient(55% 65% at 12% 14%, color-mix(in srgb, var(--accent-magenta) 20%, transparent) 0%, transparent 70%),
+    radial-gradient(45% 55% at 86% 8%, color-mix(in srgb, var(--accent-violet) 18%, transparent) 0%, transparent 72%),
+    radial-gradient(60% 70% at 50% 92%, color-mix(in srgb, var(--accent-blue) 16%, transparent) 0%, transparent 78%),
+    linear-gradient(145deg, #0b0c0f 0%, #0f1118 45%, #12131a 100%);
+  animation: cyberBreathe 18s ease-in-out infinite;
 }
 
 .cyber-noise {
-  opacity: 0.04;
+  opacity: 0.06;
   background-image:
-    radial-gradient(circle at 15% 20%, #ffffff 0.3px, transparent 0.3px),
-    radial-gradient(circle at 70% 65%, #ffffff 0.3px, transparent 0.3px);
+    radial-gradient(circle at 15% 20%, #f3efe8 0.3px, transparent 0.3px),
+    radial-gradient(circle at 70% 65%, #f3efe8 0.3px, transparent 0.3px);
   background-size: 3px 3px, 4px 4px;
+  mix-blend-mode: screen;
 }
 
 .cyber-float {
@@ -116,36 +126,36 @@ body {
 }
 
 .cyber-card {
-  background: color-mix(in srgb, var(--surface) 76%, transparent);
-  backdrop-filter: blur(16px);
-  border: 1px solid color-mix(in srgb, var(--glow-purple) 36%, transparent);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--glow-pink) 18%, transparent),
-    0 0 24px color-mix(in srgb, var(--glow-purple) 14%, transparent),
-    0 28px 56px color-mix(in srgb, #000000 72%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, #ffffff 6%, transparent),
+    0 12px 28px color-mix(in srgb, #000000 45%, transparent),
+    0 30px 60px color-mix(in srgb, #000000 35%, transparent);
   transition: transform 200ms ease, filter 200ms ease, box-shadow 200ms ease;
 }
 
 .cyber-card:hover {
-  transform: translateY(-2px);
-  filter: brightness(1.05);
-  animation: glowPulse 1400ms ease-in-out infinite;
+  transform: translateY(-3px);
+  filter: saturate(1.05);
+  animation: glowPulse 1600ms ease-in-out infinite;
 }
 
 .mymic-signal {
   background:
-    radial-gradient(60% 100% at 10% 20%, color-mix(in srgb, var(--glow-pink) 35%, transparent) 0%, transparent 72%),
-    radial-gradient(70% 100% at 80% 85%, color-mix(in srgb, var(--glow-purple) 35%, transparent) 0%, transparent 70%),
+    radial-gradient(60% 100% at 10% 20%, color-mix(in srgb, var(--glow-pink) 28%, transparent) 0%, transparent 72%),
+    radial-gradient(70% 100% at 80% 85%, color-mix(in srgb, var(--glow-purple) 28%, transparent) 0%, transparent 70%),
     repeating-linear-gradient(
       120deg,
       transparent 0,
       transparent 18px,
-      color-mix(in srgb, var(--accent-blue) 24%, transparent) 19px,
+      color-mix(in srgb, var(--accent-blue) 20%, transparent) 19px,
       transparent 21px
     );
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--glow-purple) 35%, transparent),
-    0 0 42px color-mix(in srgb, var(--glow-pink) 20%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--glow-purple) 24%, transparent),
+    0 18px 36px color-mix(in srgb, var(--glow-pink) 16%, transparent);
   animation: signalDrift 14s ease-in-out infinite;
 }
 
@@ -154,8 +164,8 @@ body {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    color-mix(in srgb, var(--glow-pink) 70%, transparent) 50%,
+    color-mix(in srgb, var(--text-primary) 35%, transparent) 50%,
     transparent 100%
   );
-  box-shadow: 0 0 26px color-mix(in srgb, var(--glow-purple) 35%, transparent);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--glow-pink) 18%, transparent);
 }
