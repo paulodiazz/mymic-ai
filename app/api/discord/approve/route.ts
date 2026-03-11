@@ -27,11 +27,12 @@ function detectTokenMismatch(raw: string): string | null {
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as Body;
-    const tokenError = detectTokenMismatch(body.botToken ?? "");
+    const rawToken = body.botToken?.trim() || process.env.DISCORD_BOT_TOKEN || "";
+    const tokenError = detectTokenMismatch(rawToken);
     if (tokenError) {
       return NextResponse.json({ ok: false, error: tokenError }, { status: 400 });
     }
-    const botToken = normalizeDiscordBotToken(body.botToken ?? "");
+    const botToken = normalizeDiscordBotToken(rawToken);
     const channelId = body.channelId?.trim() ?? "";
     const sourceMessageId = body.sourceMessageId?.trim() ?? "";
     const replyText = body.replyText?.trim() ?? "";

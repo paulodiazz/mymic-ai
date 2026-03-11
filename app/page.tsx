@@ -55,7 +55,29 @@ type DiscoverPost = {
   id: string;
   text: string;
   authorUsername: string;
+  authorName?: string;
+  createdAt?: string;
+  metrics?: {
+    like_count?: number;
+    reply_count?: number;
+    retweet_count?: number;
+    quote_count?: number;
+  };
   score: number;
+  relevanceScore?: number;
+  relevanceReason?: string;
+};
+type DiscoverContext = {
+  query: string;
+  productName: string;
+  productType: string;
+  audience: string;
+  terms: string[];
+  strongTerms: string[];
+  weakTerms: string[];
+  fullQuery: string;
+  summary?: string;
+  source?: "model" | "heuristic";
 };
 type Day = {
   day: number;
@@ -294,10 +316,147 @@ const DEFAULT_STATE: AppState = {
   activeBotId: null,
 };
 
+const stripSecretsForSave = (state: AppState): AppState => ({
+  ...state,
+  openaiApiKey: "",
+  discordBotToken: "",
+  bots: (state.bots ?? []).map((bot) => ({
+    ...bot,
+    discordBotToken: "",
+  })),
+});
+
 const toComposeUrl = (text: string): string =>
   `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
 const cleanPostText = (text: string): string =>
   text.replace(/^\s*\[tone:[^\]]+\]\s*/i, "").trim();
+const DISCOVER_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "for",
+  "from",
+  "has",
+  "have",
+  "how",
+  "i",
+  "in",
+  "is",
+  "it",
+  "its",
+  "my",
+  "of",
+  "on",
+  "or",
+  "our",
+  "that",
+  "the",
+  "their",
+  "them",
+  "they",
+  "this",
+  "to",
+  "we",
+  "were",
+  "what",
+  "when",
+  "where",
+  "who",
+  "why",
+  "with",
+  "you",
+  "your",
+]);
+const DISCOVER_SHORT_TERMS = new Set(["ai", "ml", "ux", "ui", "b2b", "b2c", "saas", "lol"]);
+const DISCOVER_GENERIC_TERMS = new Set([
+  "ai",
+  "app",
+  "plugin",
+  "tool",
+  "tools",
+  "platform",
+  "product",
+  "startup",
+  "players",
+  "player",
+  "game",
+  "games",
+]);
+const buildDiscoverContextFromInputs = (input: {
+  query: string;
+  productName: string;
+  productType: string;
+  audience: string;
+}): DiscoverContext => {
+  const phraseParts = [input.productName, input.productType, input.audience, input.query]
+    .map((v) => v.trim())
+    .filter((v) => v.length > 2);
+  const combined = phraseParts.join(" ").toLowerCase();
+  const specialTerms: string[] = [];
+  if (combined.includes("league of legends") || (combined.includes("league") && combined.includes("legends"))) {
+    specialTerms.push("league of legends", "league", "legends", "lol");
+  }
+  const tokenSource = combined.replace(/[^a-z0-9\s]/gi, " ");
+  const tokens = tokenSource
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(
+      (t) =>
+        (t.length >= 3 || DISCOVER_SHORT_TERMS.has(t)) &&
+        !DISCOVER_STOPWORDS.has(t) &&
+        !/^\d+$/.test(t)
+    );
+  const strongTerms = Array.from(
+    new Set([
+      ...specialTerms,
+      ...tokens.filter((t) => !DISCOVER_GENERIC_TERMS.has(t) && t.length >= 4),
+    ])
+  ).slice(0, 8);
+  const weakTerms = Array.from(
+    new Set(tokens.filter((t) => !strongTerms.includes(t)))
+  ).slice(0, 10);
+  const terms = Array.from(new Set([...strongTerms, ...weakTerms]));
+  const strongQuery = strongTerms.length
+    ? `(${strongTerms.map((t) => `"${t}"`).join(" OR ")})`
+    : "";
+  const weakQuery = weakTerms.length ? `(${weakTerms.map((t) => `"${t}"`).join(" OR ")})` : "";
+  const fullQuery = [strongQuery, weakQuery].filter(Boolean).join(" ").trim();
+  return {
+    query: input.query,
+    productName: input.productName,
+    productType: input.productType,
+    audience: input.audience,
+    terms,
+    strongTerms,
+    weakTerms,
+    fullQuery,
+  };
+};
+const buildDiscoverReasons = (post: DiscoverPost, ctx: DiscoverContext | null): string[] => {
+  if (post.relevanceReason) return [post.relevanceReason];
+  if (!ctx) return ["ranked by engagement score"];
+  const text = post.text.toLowerCase();
+  const strongMatches = ctx.strongTerms
+    .filter((term) => text.includes(term.toLowerCase()))
+    .slice(0, 4);
+  const weakMatches = ctx.weakTerms
+    .filter((term) => text.includes(term.toLowerCase()))
+    .slice(0, 6);
+  const reasons = [];
+  if (strongMatches.length > 0) {
+    reasons.push(`matches required terms: ${strongMatches.join(", ")}`);
+  } else if (weakMatches.length > 0) {
+    reasons.push(`matches terms: ${weakMatches.join(", ")}`);
+  }
+  reasons.push("filtered to non-replies and non-retweets");
+  reasons.push("ranked by engagement score");
+  return reasons;
+};
 const newCampaignId = (): string =>
   `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const newBotId = (): string =>
@@ -894,6 +1053,9 @@ export default function Home() {
   const [discovering, setDiscovering] = useState(false);
   const [discoveredPosts, setDiscoveredPosts] = useState<DiscoverPost[]>([]);
   const [discoverMsg, setDiscoverMsg] = useState("");
+  const [discoverView, setDiscoverView] = useState<"overview" | "post">("overview");
+  const [discoverFocus, setDiscoverFocus] = useState(1);
+  const [discoverContext, setDiscoverContext] = useState<DiscoverContext | null>(null);
   const [engaging, setEngaging] = useState(false);
   const [engageMsg, setEngageMsg] = useState("");
   const [automationRunning, setAutomationRunning] = useState(false);
@@ -976,7 +1138,7 @@ export default function Home() {
               "Content-Type": "application/json",
               Authorization: `Bearer ${accessToken}`,
             },
-            body: JSON.stringify({ state: fresh }),
+          body: JSON.stringify({ state: stripSecretsForSave(fresh) }),
           });
         }
       } catch {
@@ -1001,7 +1163,7 @@ export default function Home() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({ state }),
+          body: JSON.stringify({ state: stripSecretsForSave(state) }),
         });
         const d = (await r.json()) as { ok: boolean; error?: string };
         if (!d.ok) {
@@ -1033,6 +1195,16 @@ export default function Home() {
     }
   }, [state.conversationArtifacts, selectedArtifactId]);
 
+  useEffect(() => {
+    if (discoveredPosts.length === 0) {
+      if (discoverFocus !== 1) setDiscoverFocus(1);
+      return;
+    }
+    if (discoverFocus > discoveredPosts.length) {
+      setDiscoverFocus(discoveredPosts.length);
+    }
+  }, [discoveredPosts.length, discoverFocus]);
+
   // Removed the one-time auto reset that could wipe bots/credentials unexpectedly.
 
   const primaryArtifact =
@@ -1042,6 +1214,12 @@ export default function Home() {
     }) ?? state.conversationArtifacts[0] ?? null;
   const selectedArtifact =
     state.conversationArtifacts.find((item) => item.id === selectedArtifactId) ?? primaryArtifact;
+  const discoverCount = discoveredPosts.length;
+  const discoverPost =
+    discoverCount > 0
+      ? discoveredPosts[Math.min(Math.max(discoverFocus, 1), discoverCount) - 1]
+      : null;
+  const discoverReasons = discoverPost ? buildDiscoverReasons(discoverPost, discoverContext) : [];
 
   const ownerConnections = {
     xToken: state.ownerXToken,
@@ -1241,7 +1419,7 @@ export default function Home() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({ state: next }),
+        body: JSON.stringify({ state: stripSecretsForSave(next) }),
       });
       const d = (await r.json()) as { ok: boolean; error?: string };
       if (!d.ok) setAuthMsg(d.error ?? "cloud save failed.");
@@ -2081,26 +2259,76 @@ export default function Home() {
     setDiscovering(true);
     setDiscoverMsg("finding relevant posts...");
     try {
+      const productName = selectedArtifact?.productName ?? state.productName;
+      const productType = selectedArtifact?.productType ?? state.productType;
+      const audience = selectedArtifact?.audience ?? state.audience;
+      const ctx = buildDiscoverContextFromInputs({
+        query: searchQuery,
+        productName,
+        productType,
+        audience,
+      });
       const r = await fetch("/api/social/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: searchQuery,
-          productName: selectedArtifact?.productName ?? state.productName,
-          productType: selectedArtifact?.productType ?? state.productType,
-          audience: selectedArtifact?.audience ?? state.audience,
+          productName,
+          productType,
+          audience,
           maxResults: 10,
+          openaiApiKey: state.openaiApiKey,
           connections: activeConnections,
         }),
       });
-      const d = (await r.json()) as { ok: boolean; error?: string; posts?: DiscoverPost[] };
+      const d = (await r.json()) as {
+        ok: boolean;
+        error?: string;
+        warning?: string;
+        posts?: DiscoverPost[];
+        context?: {
+          query?: string;
+          mustTerms?: string[];
+          optionalTerms?: string[];
+          summary?: string;
+          source?: "model" | "heuristic";
+        };
+      };
       if (!d.ok) {
         setDiscoverMsg(d.error ?? "discover failed");
         return;
       }
       const posts = d.posts ?? [];
       setDiscoveredPosts(posts);
-      setDiscoverMsg(`found ${posts.length} relevant posts`);
+      const serverContext = d.context;
+      if (serverContext) {
+        const mustTerms = Array.isArray(serverContext.mustTerms) ? serverContext.mustTerms : [];
+        const optionalTerms = Array.isArray(serverContext.optionalTerms)
+          ? serverContext.optionalTerms
+          : [];
+        setDiscoverContext({
+          query: searchQuery,
+          productName,
+          productType,
+          audience,
+          terms: Array.from(new Set([...mustTerms, ...optionalTerms])),
+          strongTerms: mustTerms,
+          weakTerms: optionalTerms,
+          fullQuery: serverContext.query ?? "",
+          summary: serverContext.summary ?? "",
+          source: serverContext.source,
+        });
+      } else {
+        setDiscoverContext({
+          ...ctx,
+          fullQuery: ctx.fullQuery
+            ? `${ctx.fullQuery} -is:retweet -is:reply lang:en`
+            : "-is:retweet -is:reply lang:en",
+        });
+      }
+      setDiscoverFocus(1);
+      const suffix = d.warning ? ` ${d.warning}` : "";
+      setDiscoverMsg(`found ${posts.length} relevant posts.${suffix}`.trim());
     } catch {
       setDiscoverMsg("discover failed");
     } finally {
@@ -3801,12 +4029,100 @@ export default function Home() {
                   )}
                   {discoveredPosts.length > 0 && (
                     <div className="rounded-lg border border-[color:color-mix(in_srgb,var(--glow-purple)_22%,transparent)] bg-black/20 p-3 text-xs">
-                      <p className="mb-2 uppercase tracking-[0.18em] text-[var(--text-dim)]">top relevant posts</p>
-                      {discoveredPosts.slice(0, 3).map((post) => (
-                        <p key={post.id} className="mb-2">
-                          @{post.authorUsername}: {post.text.slice(0, 120)}...
-                        </p>
-                      ))}
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="uppercase tracking-[0.18em] text-[var(--text-dim)]">relevant posts</p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            color="secondary"
+                            variant={discoverView === "overview" ? "solid" : "flat"}
+                            onPress={() => setDiscoverView("overview")}
+                          >
+                            overview
+                          </Button>
+                          <Button
+                            size="sm"
+                            color="secondary"
+                            variant={discoverView === "post" ? "solid" : "flat"}
+                            onPress={() => setDiscoverView("post")}
+                          >
+                            one by one
+                          </Button>
+                        </div>
+                      </div>
+                      {discoverContext && (
+                        <div className="mb-2 text-[var(--text-dim)]">
+                          <p>query: {discoverContext.query || "n/a"}</p>
+                          {discoverContext.strongTerms.length > 0 && (
+                            <p>required terms: {discoverContext.strongTerms.join(", ")}</p>
+                          )}
+                          {discoverContext.weakTerms.length > 0 && (
+                            <p>optional terms: {discoverContext.weakTerms.join(", ")}</p>
+                          )}
+                          {discoverContext.summary && (
+                            <p>context: {discoverContext.summary}</p>
+                          )}
+                          <p>filters: no replies, no retweets, lang en</p>
+                        </div>
+                      )}
+                      {discoverView === "overview" ? (
+                        discoveredPosts.map((post) => (
+                          <p key={post.id} className="mb-2">
+                            @{post.authorUsername}: {post.text.slice(0, 140)}...
+                          </p>
+                        ))
+                      ) : (
+                        <div className="space-y-3">
+                          <Pagination
+                            size="sm"
+                            total={discoveredPosts.length}
+                            page={discoverFocus}
+                            onChange={(page) => setDiscoverFocus(page)}
+                          />
+                          {discoverPost ? (
+                            <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-semibold">
+                                  @{discoverPost.authorUsername}
+                                  {discoverPost.authorName ? ` (${discoverPost.authorName})` : ""}
+                                </p>
+                                <p className="text-xs text-[var(--text-dim)]">
+                                  score {discoverPost.score}
+                                  {typeof discoverPost.relevanceScore === "number"
+                                    ? ` · relevance ${discoverPost.relevanceScore}`
+                                    : ""}
+                                </p>
+                              </div>
+                              <a
+                                className="mt-2 inline-block text-xs text-[var(--glow-teal)] underline-offset-4 hover:underline"
+                                href={`https://x.com/${discoverPost.authorUsername}/status/${discoverPost.id}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                view on x
+                              </a>
+                              <p className="mt-2 whitespace-pre-wrap text-[var(--text-primary)]/90">
+                                {discoverPost.text}
+                              </p>
+                              <Divider className="my-3 bg-white/10" />
+                              <div className="text-xs text-[var(--text-dim)]">
+                                <p>why relevant</p>
+                                {discoverReasons.length === 0 ? (
+                                  <p className="mt-1">ranked by engagement score</p>
+                                ) : (
+                                  discoverReasons.map((reason) => (
+                                    <p key={reason} className="mt-1">
+                                      {reason}
+                                    </p>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <p>no post selected yet.</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                   {results.map((r) => (
